@@ -131,7 +131,9 @@ if master_list:
         f"總彙整檔案 {master_filename} 更新完成，總計 {len(master_df)} 筆歷史紀錄。"
     )
 
-# 5. 自動繪製溫度與雨量折線圖並輸出為圖片
+# ==========================================
+# 5. 自動繪製氣溫折線圖與雨量直條圖並輸出圖片
+# ==========================================
 if master_list and not master_df.empty:
     plt.rcParams["font.sans-serif"] = [
         "Noto Sans CJK TC",
@@ -143,38 +145,64 @@ if master_list and not master_df.empty:
     plot_df = master_df.copy()
     plot_df["DateTime"] = pd.to_datetime(plot_df["DateTime"])
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
 
-    for station_name, group in plot_df.groupby("StationName"):
+    # 取得所有測站名稱與數量，用於計算直條圖的位移量
+    station_names = plot_df["StationName"].unique()
+    num_stations = len(station_names)
+
+    # 上圖：氣溫折線圖 (Line Chart)
+    for station_name in station_names:
+        group = plot_df[plot_df["StationName"] == station_name]
         ax1.plot(
             group["DateTime"],
             group["Temperature"],
             marker="o",
             markersize=3,
-            label=station_name,
-        )
-        ax2.plot(
-            group["DateTime"],
-            group["Rainfall"],
-            marker="s",
-            markersize=3,
+            linewidth=1.5,
             label=station_name,
         )
 
     ax1.set_title("即時氣溫變化圖 (°C)", fontsize=14, fontweight="bold")
     ax1.set_ylabel("氣溫 (°C)")
-    ax1.grid(True, linestyle="--", alpha=0.6)
+    ax1.grid(True, linestyle="--", alpha=0.5)
     ax1.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-    ax2.set_title("即時雨量變化圖 (mm)", fontsize=14, fontweight="bold")
+    # 下圖：雨量直條圖 (Bar Chart)
+    # 為防止多測站柱子重疊，使用 offset 計算並排寬度
+    bar_width = 0.003  # 可依據資料密度調整柱子寬度 (以天數單位計算)
+
+    for i, station_name in enumerate(station_names):
+        group = plot_df[plot_df["StationName"] == station_name]
+
+        # 算出各測站柱子的時間偏移量
+        offset = (i - (num_stations - 1) / 2) * bar_width
+        # 將 datetime 轉為 matplotlib 的數值時間以便加上 offset
+        x_dates = mdates.date2num(group["DateTime"]) + offset
+
+        ax2.bar(
+            x_dates,
+            group["Rainfall"],
+            width=bar_width,
+            alpha=0.7,
+            label=station_name,
+        )
+
+    ax2.set_title("即時雨量直條圖 (mm)", fontsize=14, fontweight="bold")
     ax2.set_xlabel("時間")
     ax2.set_ylabel("雨量 (mm)")
-    ax2.grid(True, linestyle="--", alpha=0.6)
+    ax2.grid(True, linestyle="--", alpha=0.5)
 
+    # 設定 X 軸時間顯示格式
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
     fig.autofmt_xdate(rotation=45)
 
     plt.tight_layout()
+
+    chart_filename = "weather_chart.png"
+    plt.savefig(chart_filename, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"折線/直條圖繪製完成：{chart_filename}")
 
     chart_filename = "weather_chart.png"
     plt.savefig(chart_filename, dpi=150, bbox_inches="tight")
