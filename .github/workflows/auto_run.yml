@@ -36,6 +36,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action Bot"
-          git add weather_history.csv weather_chart.png
-          git diff-index --quiet HEAD || git commit -m "Auto update weather data [skip ci]"
+          # 使用 git add . 確保 stations_data/ 資料夾與裡面的 CSV 都被追蹤
+          git add .
+          git diff-index --quiet HEAD || git commit -m "Auto update weather data & station files [skip ci]"
           git push
