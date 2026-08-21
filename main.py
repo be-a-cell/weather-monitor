@@ -3,15 +3,15 @@ import requests
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# 指定要抓取的測站列表
-STATION_IDS = "C0T9D0,C0Z310,C0Z220,C0Z230,C0TA40,C0TA50"
-API_KEY = os.environ.get("CWA_API_KEY")
+# 1. 定義你需要的 6 個測站代碼 (用列表明確指定)
+TARGET_STATIONS = ["C0T9D0", "C0Z310", "C0Z220", "C0Z230", "C0TA40", "C0TA50"]
 
-# API URL 加上 StationId 篩選
-URL = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={API_KEY}&format=JSON&StationId={STATION_IDS}"
+API_KEY = os.environ.get("CWA_API_KEY")
+# 使用基本的 API URL，不用在 URL 帶多個 StationId，避免 API 忽略參數
+URL = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={API_KEY}&format=JSON"
 CSV_FILE = "weather_history.csv"
 
-# 設定 Matplotlib 字型 (支援 Linux 伺服器中文)
+# 設定 Matplotlib 中文字型
 plt.rcParams['font.sans-serif'] = ['Noto Sans CJK JP', 'Noto Sans CJK TC', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
@@ -25,69 +25,74 @@ def fetch_weather_data():
     stations = data.get("records", {}).get("Station", [])
     
     if not stations:
-        print("未抓取到指定測站資料。")
+        print("未抓取到任何測站資料。")
         return None
 
     records = []
     for s in stations:
         station_id = s.get("StationId")
-        station_name = s.get("StationName")
         
-        # 取得觀測時間
-        obs_time = s.get("ObsTime", {}).get("DateTime") or s.get("DateTime")
-        
-        # 取得 WeatherElement 內的數據
-        weather_el = s.get("WeatherElement", {})
-        
-        # 氣溫 (AirTemperature)
-        temp_val = weather_el.get("AirTemperature", -99)
-        # 1小時累積雨量 (Now -> Precipitation)
-        rain_val = weather_el.get("Now", {}).get("Precipitation", 0)
-        
-        # 數值清理與轉換
-        try:
-            temp = float(temp_val) if float(temp_val) > -50 else None
-        except (ValueError, TypeError):
-            temp = None
+        # 精確比對：只留下你在 TARGET_STATIONS 裡面指定的測站
+        if station_id in TARGET_STATIONS:
+            station_name = s.get("StationName")
+            obs_time = s.get("ObsTime", {}).get("DateTime") or s.get("DateTime")
             
-        try:
-            rain = float(rain_val) if float(rain_val) >= 0 else 0.0
-        except (ValueError, TypeError):
-            rain = 0.0
+            weather_el = s.get("WeatherElement", {})
+            temp_val = weather_el.get("AirTemperature", -99)
+            rain_val = weather_el.get("Now", {}).get("Precipitation", 0)
+            
+            # 數值清理
+            try:
+                temp = float(temp_val) if float(temp_val) > -50 else None
+            except (ValueError, TypeError):
+                temp = None
+                
+            try:
+                rain = float(rain_val) if float(rain_val) >= 0 else 0.0
+            except (ValueError, TypeError):
+                rain = 0.0
 
-        records.append({
-            "DateTime": pd.to_datetime(obs_time),
-            "StationId": station_id,
-            "StationName": station_name,
-            "Temperature": temp,
-            "Rainfall": rain
-        })
+            records.append({
+                "DateTime": pd.to_datetime(obs_time),
+                "StationId": station_id,
+                "StationName": station_name,
+                "Temperature": temp,
+                "Rainfall": rain
+            })
+            
+    print(f"成功篩選出 {len(records)} 筆指定測站資料。")
     return pd.DataFrame(records)
 
 def update_csv_and_plot():
     new_df = fetch_weather_data()
     if new_df is None or new_df.empty:
-        print("未抓到有效資料。")
+        print("警告：未抓到指定測站資料，請確認測站代碼是否正確。")
         return
 
-    # 1. 更新或建立 CSV 歷史紀錄
+    # 處理歷史 CSV：避免被新環境覆蓋
     if os.path.exists(CSV_FILE):
-        old_df = pd.read_csv(CSV_FILE, parse_dates=["DateTime"])
+        print("讀取現有 CSV 歷史紀錄並合併...")
+        old_df = pd.read_csv(CSV_FILE)
+        old_df["DateTime"] = pd.to_datetime(old_df["DateTime"])
+        
+        # 合併新舊資料，並去除重複時間與測站的資料
         combined_df = pd.concat([old_df, new_df]).drop_duplicates(subset=["DateTime", "StationId"])
     else:
+        print("未發現歷史 CSV，建立新紀錄檔...")
         combined_df = new_df
 
+    # 依照時間排序
     combined_df.sort_values("DateTime", inplace=True)
     combined_df.to_csv(CSV_FILE, index=False, encoding="utf-8-sig")
-    print("CSV 資料庫更新成功！")
+    print(f"CSV 更新完成，目前累積總筆數：{len(combined_df)}")
 
-    # 2. 繪製指定的 6 個測站圖表
+    # 繪製指定的測站圖表
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
     
-    # 取出所有登場過的測站
-    target_stations = combined_df["StationName"].unique()
+    # 取得目前記錄中的測站名稱
+    unique_stations = combined_df["StationName"].unique()
     
-    for st in target_stations:
+    for st in unique_stations:
         st_data = combined_df[combined_df["StationName"] == st]
         ax1.plot(st_data["DateTime"], st_data["Temperature"], marker='o', label=st)
         ax2.plot(st_data["DateTime"], st_data["Rainfall"], marker='s', linestyle='--', label=st)
@@ -106,7 +111,7 @@ def update_csv_and_plot():
     plt.tight_layout()
     plt.savefig("weather_chart.png")
     plt.close()
-    print("指定測站統計圖表（weather_chart.png）更新成功！")
+    print("統計圖表（weather_chart.png）更新成功！")
 
 if __name__ == "__main__":
     update_csv_and_plot()
