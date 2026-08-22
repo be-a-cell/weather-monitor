@@ -1,7 +1,7 @@
 import glob
 import os
-import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import pandas as pd
 import requests
 
@@ -51,7 +51,6 @@ new_df = pd.DataFrame(new_records)
 
 # 2. 檢查是否有舊的歷史 CSV 需要一併匯入 (例如 old_data.csv 或 舊的 weather_history.csv)
 old_records_df = pd.DataFrame()
-# 搜尋當前目錄下所有的歷史 CSV (排除總表與測站目錄)
 historical_files = [
     f
     for f in glob.glob("*.csv")
@@ -61,9 +60,7 @@ historical_files = [
 for old_file in historical_files:
     try:
         temp_df = pd.read_csv(old_file)
-        # 確保必要欄位存在
         if "StationId" in temp_df.columns and "DateTime" in temp_df.columns:
-            # 只篩選目標 6 個測站
             temp_df = temp_df[temp_df["StationId"].isin(target_stations)]
             old_records_df = pd.concat(
                 [old_records_df, temp_df], ignore_index=True
@@ -75,21 +72,18 @@ for old_file in historical_files:
 # 合併本次最新抓取的資料與找到的舊 CSV 資料
 all_incoming_df = pd.concat([old_records_df, new_df], ignore_index=True)
 
-# 3. 按測站寫入各自獨立的 CSV 檔案 (例如：stations_data/C0TA40_秀林.csv)
+# 3. 按測站寫入各自獨立的 CSV 檔案
 for s_id in target_stations:
-    # 篩選該測站資料
     station_incoming = all_incoming_df[
         all_incoming_df["StationId"] == s_id
     ].copy()
 
     if station_incoming.empty:
-        # 如果這次沒抓到且沒舊資料，嘗試獲取測站名稱
         continue
 
     s_name = station_incoming["StationName"].iloc[0]
     station_csv_path = os.path.join(STATION_DIR, f"{s_id}_{s_name}.csv")
 
-    # 如果該測站已有自己的獨立 CSV，讀取出來疊加
     if os.path.exists(station_csv_path):
         exist_df = pd.read_csv(station_csv_path)
         combined_station_df = pd.concat(
@@ -98,19 +92,19 @@ for s_id in target_stations:
     else:
         combined_station_df = station_incoming
 
-    # 去重 (依時間與測站ID) 並排序
     combined_station_df.drop_duplicates(
         subset=["DateTime", "StationId"], inplace=True
     )
     combined_station_df.sort_values(by="DateTime", inplace=True)
 
-    # 寫回該測站專屬的 CSV
     combined_station_df.to_csv(
         station_csv_path, index=False, encoding="utf-8-sig"
     )
-    print(f"測站 [{s_name}] 獨立 CSV 更新完成，共 {len(combined_station_df)} 筆。")
+    print(
+        f"測站 [{s_name}] 獨立 CSV 更新完成，共 {len(combined_station_df)} 筆。"
+    )
 
-# 4. 統一彙整所有測站獨立 CSV $\rightarrow$ 輸出成總表 weather_history.csv
+# 4. 統一彙整所有測站獨立 CSV -> 輸出成總表 weather_history.csv
 all_station_files = glob.glob(os.path.join(STATION_DIR, "*.csv"))
 master_list = []
 
@@ -120,9 +114,7 @@ for s_file in all_station_files:
 
 if master_list:
     master_df = pd.concat(master_list, ignore_index=True)
-    master_df.drop_duplicates(
-        subset=["DateTime", "StationId"], inplace=True
-    )
+    master_df.drop_duplicates(subset=["DateTime", "StationId"], inplace=True)
     master_df.sort_values(by=["DateTime", "StationId"], inplace=True)
 
     master_filename = "weather_history.csv"
@@ -132,10 +124,12 @@ if master_list:
     )
 
 # ==========================================
-# 5. 自動繪製氣溫折線圖與雨量直條圖並輸出圖片
+# 5. 自動繪製氣溫折線圖與雨量直條圖並輸出圖片 (修正版)
 # ==========================================
 if master_list and not master_df.empty:
+    # 支援不同作業系統的中文字型（加入微軟正黑體）
     plt.rcParams["font.sans-serif"] = [
+        "Microsoft JhengHei",
         "Noto Sans CJK TC",
         "WenQuanYi Zen Hei",
         "Arial Unicode MS",
@@ -143,17 +137,29 @@ if master_list and not master_df.empty:
     plt.rcParams["axes.unicode_minus"] = False
 
     plot_df = master_df.copy()
+
+    # 強制清洗資料型別，避免 CSV 讀入時變字串導致無法畫圖
     plot_df["DateTime"] = pd.to_datetime(plot_df["DateTime"])
+    plot_df["Temperature"] = pd.to_numeric(
+        plot_df["Temperature"], errors="coerce"
+    )
+    plot_df["Rainfall"] = pd.to_numeric(plot_df["Rainfall"], errors="coerce")
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
+    # 必須依時間排序，折線圖才不會交叉拉線
+    plot_df.sort_values(by="DateTime", inplace=True)
 
-    # 取得所有測站名稱與數量，用於計算直條圖的位移量
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+
     station_names = plot_df["StationName"].unique()
     num_stations = len(station_names)
 
-    # 上圖：氣溫折線圖 (Line Chart)
+    # 1. 上圖：氣溫折線圖 (Line Chart)
     for station_name in station_names:
-        group = plot_df[plot_df["StationName"] == station_name]
+        group = plot_df[plot_df["StationName"] == station_name].dropna(
+            subset=["Temperature"]
+        )
+        if group.empty:
+            continue
         ax1.plot(
             group["DateTime"],
             group["Temperature"],
@@ -168,22 +174,24 @@ if master_list and not master_df.empty:
     ax1.grid(True, linestyle="--", alpha=0.5)
     ax1.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-    # 下圖：雨量直條圖 (Bar Chart)
-    # 為防止多測站柱子重疊，使用 offset 計算並排寬度
-    bar_width = 0.003  # 可依據資料密度調整柱子寬度 (以天數單位計算)
+    # 2. 下圖：雨量直條圖 (Bar Chart)
+    # 依時間間隔調整 bar_width (以天為單位，0.015 約為 20 分鐘寬)
+    single_bar_width = 0.012 / max(num_stations, 1)
 
     for i, station_name in enumerate(station_names):
-        group = plot_df[plot_df["StationName"] == station_name]
+        group = plot_df[plot_df["StationName"] == station_name].dropna(
+            subset=["Rainfall"]
+        )
+        if group.empty:
+            continue
 
-        # 算出各測站柱子的時間偏移量
-        offset = (i - (num_stations - 1) / 2) * bar_width
-        # 將 datetime 轉為 matplotlib 的數值時間以便加上 offset
+        offset = (i - (num_stations - 1) / 2) * single_bar_width
         x_dates = mdates.date2num(group["DateTime"]) + offset
 
         ax2.bar(
             x_dates,
             group["Rainfall"],
-            width=bar_width,
+            width=single_bar_width,
             alpha=0.7,
             label=station_name,
         )
@@ -192,6 +200,7 @@ if master_list and not master_df.empty:
     ax2.set_xlabel("時間")
     ax2.set_ylabel("雨量 (mm)")
     ax2.grid(True, linestyle="--", alpha=0.5)
+    ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
     # 設定 X 軸時間顯示格式
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
@@ -199,12 +208,8 @@ if master_list and not master_df.empty:
 
     plt.tight_layout()
 
+    # 儲存圖片並關閉 Figure（只需執行一次）
     chart_filename = "weather_chart.png"
     plt.savefig(chart_filename, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"折線/直條圖繪製完成：{chart_filename}")
-
-    chart_filename = "weather_chart.png"
-    plt.savefig(chart_filename, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"折線圖更新完成：{chart_filename}")
+    plt.close(fig)
+    print(f"氣溫折線圖與雨量直條圖繪製完成：{chart_filename}")
