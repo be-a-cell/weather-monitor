@@ -41,8 +41,8 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 將所有產生的檔案納入 Commit
-          git add weather_history.csv missing_or_invalid_data.csv weather_chart.png stations_data/ NotoSansCJKtc-Regular.otf
+          # 使用 git add . 自動加入所有新增與修改的檔案
+          git add .
           
           if ! git diff --staged --quiet; then
             git commit -m "Auto update weather data & station files [skip ci]"
