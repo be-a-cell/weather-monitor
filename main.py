@@ -9,7 +9,6 @@ import requests
 # ==========================================
 # 0. 中文字型與繪圖設定 (解決圖片字顯示不出來的問題)
 # ==========================================
-# 嘗試自動下載與載入思源黑體（若系統無中文字型時）
 try:
     font_url = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf"
     font_path = "NotoSansCJKtc-Regular.otf"
@@ -22,29 +21,26 @@ try:
         fname=font_path
     ).get_name()
 except Exception as e:
-    # 備用：系統常見繁體中文字型
     plt.rcParams["font.sans-serif"] = [
         "Microsoft JhengHei",
         "Arial Unicode MS",
-        "MingLiU",
         "WenQuanYi Zen Hei",
         "DejaVu Sans",
     ]
 
-plt.rcParams["axes.unicode_minus"] = False  # 解決負號變方框問題
+plt.rcParams["axes.unicode_minus"] = False
 
 # ==========================================
-# 時間軸範圍設定 (自主調整年月日或年月)
-# 例如: "2026-08-01" 至 "2026-08-31"，或留空 None 顯示全部
+# 時間軸自主調整 (設定抓取/繪圖的時間區間)
+# 可設定格式: "2026-08-01", "2026-08" 或 None (不限制)
 # ==========================================
-START_DATE = None  # 例如 "2026-08-01" 或 "2026-08"
-END_DATE = None  # 例如 "2026-08-25" 或 "2026-08"
+START_DATE = None  # 例如 "2026-08-01"
+END_DATE = None  # 例如 "2026-08-31"
 
-# 建立放置各測站獨立 CSV 的資料夾
 STATION_DIR = "stations_data"
 os.makedirs(STATION_DIR, exist_ok=True)
 
-# 1. 抓取氣象署最新資料 (以 O-A0001-001 自動氣象站為例)
+# 1. 抓取氣象署最新資料
 API_KEY = os.getenv("CWA_API_KEY")
 url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization={API_KEY}"
 
@@ -90,8 +86,6 @@ if "records" in data and "Station" in data["records"]:
                 "-998",
                 "None",
             ]
-
-            # 雨量處理：異常值留 None，正常 0 仍留 0.0
             rain = float(raw_rain) if not rain_is_invalid else None
 
             # 判斷是否屬於「沒有成功抓到的資料」（排除雨量=0的情況）
@@ -132,7 +126,6 @@ if invalid_records:
     invalid_df = pd.DataFrame(invalid_records)
     invalid_csv_path = "missing_or_invalid_data.csv"
 
-    # 若檔案存在則追加，否則建立新檔
     if os.path.exists(invalid_csv_path):
         exist_invalid_df = pd.read_csv(invalid_csv_path)
         invalid_df = pd.concat(
@@ -141,10 +134,8 @@ if invalid_records:
 
     invalid_df.to_csv(invalid_csv_path, index=False, encoding="utf-8-sig")
     print(f"已整理無效/缺失數據至: {invalid_csv_path} (共 {len(invalid_df)} 筆)")
-else:
-    print("本次抓取無異常/缺失資料。")
 
-# 2. 檢查歷史 CSV 並合併
+# 2. 歷史 CSV 合併
 old_records_df = pd.DataFrame()
 historical_files = [
     f
@@ -165,13 +156,12 @@ for old_file in historical_files:
             old_records_df = pd.concat(
                 [old_records_df, temp_df], ignore_index=True
             )
-            print(f"成功讀取舊歷史資料檔: {old_file}")
     except Exception as e:
         print(f"讀取 {old_file} 失敗: {e}")
 
 all_incoming_df = pd.concat([old_records_df, new_df], ignore_index=True)
 
-# 3. 按測站寫入各自獨立 CSV
+# 3. 按測站寫入獨立 CSV
 for s_id in target_stations:
     station_incoming = all_incoming_df[
         all_incoming_df["StationId"] == s_id
@@ -213,12 +203,9 @@ if master_list:
 
     master_filename = "weather_history.csv"
     master_df.to_csv(master_filename, index=False, encoding="utf-8-sig")
-    print(
-        f"總彙整檔案 {master_filename} 更新完成，總計 {len(master_df)} 筆歷史紀錄。"
-    )
 
 # ==========================================
-# 5. 自動繪製氣溫折線圖與雨量直條圖
+# 5. 繪製圖表 (套用自主時間軸過濾)
 # ==========================================
 if master_list and not master_df.empty:
     plot_df = master_df.copy()
@@ -229,27 +216,24 @@ if master_list and not master_df.empty:
     )
     plot_df["Rainfall"] = pd.to_numeric(plot_df["Rainfall"], errors="coerce")
 
-    # --- 時間軸自主調整 (依據 START_DATE 與 END_DATE 進行過濾) ---
+    # --- 時間軸過濾 ---
     if START_DATE:
         plot_df = plot_df[plot_df["DateTime"] >= pd.to_datetime(START_DATE)]
     if END_DATE:
-        # 如果只給年月 (如 "2026-08")，轉換時包含該月最後一刻
         end_dt = pd.to_datetime(END_DATE)
-        if len(END_DATE) <= 7:  # YYYY-MM 格式
+        if len(END_DATE) <= 7:
             end_dt = end_dt + pd.offsets.MonthEnd(1) + pd.Timedelta(days=1)
         plot_df = plot_df[plot_df["DateTime"] <= end_dt]
 
     plot_df.sort_values(by="DateTime", inplace=True)
 
-    if plot_df.empty:
-        print("指定時間區間內沒有資料可供繪圖。")
-    else:
+    if not plot_df.empty:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
 
         station_names = plot_df["StationName"].unique()
         num_stations = len(station_names)
 
-        # 1. 上圖：氣溫折線圖
+        # 氣溫折線圖
         for station_name in station_names:
             group = plot_df[plot_df["StationName"] == station_name].dropna(
                 subset=["Temperature"]
@@ -270,7 +254,7 @@ if master_list and not master_df.empty:
         ax1.grid(True, linestyle="--", alpha=0.5)
         ax1.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-        # 2. 下圖：雨量直條圖
+        # 雨量直條圖
         single_bar_width = 0.012 / max(num_stations, 1)
 
         for i, station_name in enumerate(station_names):
@@ -297,7 +281,6 @@ if master_list and not master_df.empty:
         ax2.grid(True, linestyle="--", alpha=0.5)
         ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-        # 設定 X 軸時間顯示格式
         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M"))
         fig.autofmt_xdate(rotation=45)
 
@@ -306,4 +289,4 @@ if master_list and not master_df.empty:
         chart_filename = "weather_chart.png"
         plt.savefig(chart_filename, dpi=150, bbox_inches="tight")
         plt.close(fig)
-        print(f"氣溫折線圖與雨量直條圖繪製完成：{chart_filename}")
+        print(f"圖表繪製完成: {chart_filename}")
