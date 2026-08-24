@@ -3,7 +3,11 @@ name: Run Weather Monitor
 on:
   schedule:
     - cron: '0 * * * *'  # 每小時自動執行一次
-  workflow_dispatch:       # 支援手動按按鈕執行
+  workflow_dispatch:       # 支援手動觸發
+
+# === 關鍵修復：授予 GitHub Actions 寫入權限 ===
+permissions:
+  contents: write
 
 jobs:
   build-and-run:
@@ -18,7 +22,6 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 安裝 Ubuntu 系統內建的中文字型，確保圖表中文顯示正常
       - name: Install Traditional Chinese Fonts
         run: |
           sudo apt-get update
@@ -39,7 +42,6 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-          # 自動追蹤所有新增與更改的檔案，避免指定特定檔名發生致命錯誤
           git add .
 
           if ! git diff --staged --quiet; then
