@@ -1,34 +1,35 @@
 import glob
 import os
 import matplotlib.dates as mdates
-import matplotlib.font_manager as fm
+from matplotlib.font_manager import FontProperties
 import matplotlib.pyplot as plt
 import pandas as pd
 import requests
 
 # ==========================================
-# 0. 中文字型與繪圖設定 (解決圖片字顯示不出來的問題)
+# 0. 中文字型設定 (下載並指定字型檔案，徹底解決方框豆腐塊問題)
 # ==========================================
-try:
+font_path = "NotoSansCJKtc-Regular.otf"
+# 若本地沒有字型檔，則自動下載思源黑體
+if not os.path.exists(font_path):
     font_url = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf"
-    font_path = "NotoSansCJKtc-Regular.otf"
-    if not os.path.exists(font_path):
-        r = requests.get(font_url, timeout=10)
+    try:
+        r = requests.get(font_url, timeout=15)
         with open(font_path, "wb") as f:
             f.write(r.content)
-    fm.fontManager.addfont(font_path)
-    plt.rcParams["font.family"] = fm.FontProperties(
-        fname=font_path
-    ).get_name()
-except Exception as e:
-    plt.rcParams["font.sans-serif"] = [
-        "Microsoft JhengHei",
-        "Arial Unicode MS",
-        "WenQuanYi Zen Hei",
-        "DejaVu Sans",
-    ]
+        print("已成功下載中文字型檔：NotoSansCJKtc-Regular.otf")
+    except Exception as e:
+        print(f"下載字型失敗: {e}")
 
-plt.rcParams["axes.unicode_minus"] = False
+# 建立字型物件
+if os.path.exists(font_path):
+    my_font = FontProperties(fname=font_path)
+    title_font = FontProperties(fname=font_path, size=14, weight="bold")
+else:
+    my_font = None
+    title_font = None
+
+plt.rcParams["axes.unicode_minus"] = False  # 解決負號無法正常顯示
 
 # ==========================================
 # 時間軸自主調整 (設定抓取/繪圖的時間區間)
@@ -205,7 +206,7 @@ if master_list:
     master_df.to_csv(master_filename, index=False, encoding="utf-8-sig")
 
 # ==========================================
-# 5. 繪製圖表 (套用自主時間軸過濾)
+# 5. 繪製圖表 (精確傳入 fontproperties 確保繁體中文正確顯示)
 # ==========================================
 if master_list and not master_df.empty:
     plot_df = master_df.copy()
@@ -216,7 +217,7 @@ if master_list and not master_df.empty:
     )
     plot_df["Rainfall"] = pd.to_numeric(plot_df["Rainfall"], errors="coerce")
 
-    # --- 時間軸過濾 ---
+    # --- 時間軸自主過濾 ---
     if START_DATE:
         plot_df = plot_df[plot_df["DateTime"] >= pd.to_datetime(START_DATE)]
     if END_DATE:
@@ -233,7 +234,7 @@ if master_list and not master_df.empty:
         station_names = plot_df["StationName"].unique()
         num_stations = len(station_names)
 
-        # 氣溫折線圖
+        # 1. 氣溫折線圖
         for station_name in station_names:
             group = plot_df[plot_df["StationName"] == station_name].dropna(
                 subset=["Temperature"]
@@ -249,12 +250,14 @@ if master_list and not master_df.empty:
                 label=station_name,
             )
 
-        ax1.set_title("即時氣溫變化圖 (°C)", fontsize=14, fontweight="bold")
-        ax1.set_ylabel("氣溫 (°C)")
+        ax1.set_title("即時氣溫變化圖 (°C)", fontproperties=title_font)
+        ax1.set_ylabel("氣溫 (°C)", fontproperties=my_font)
         ax1.grid(True, linestyle="--", alpha=0.5)
-        ax1.legend(loc="upper left", bbox_to_anchor=(1, 1))
+        ax1.legend(
+            loc="upper left", bbox_to_anchor=(1, 1), prop=my_font
+        )  # 注意：圖例使用 prop
 
-        # 雨量直條圖
+        # 2. 雨量直條圖
         single_bar_width = 0.012 / max(num_stations, 1)
 
         for i, station_name in enumerate(station_names):
@@ -275,13 +278,14 @@ if master_list and not master_df.empty:
                 label=station_name,
             )
 
-        ax2.set_title("即時雨量直條圖 (mm)", fontsize=14, fontweight="bold")
-        ax2.set_xlabel("時間")
-        ax2.set_ylabel("雨量 (mm)")
+        ax2.set_title("即時雨量直條圖 (mm)", fontproperties=title_font)
+        ax2.set_xlabel("時間", fontproperties=my_font)
+        ax2.set_ylabel("雨量 (mm)", fontproperties=my_font)
         ax2.grid(True, linestyle="--", alpha=0.5)
-        ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
+        ax2.legend(loc="upper left", bbox_to_anchor=(1, 1), prop=my_font)
 
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M"))
+        # 設定 X 軸時間顯示格式
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
         fig.autofmt_xdate(rotation=45)
 
         plt.tight_layout()
