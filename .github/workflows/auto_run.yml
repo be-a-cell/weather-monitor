@@ -2,12 +2,12 @@ name: Auto Weather Monitor
 
 on:
   schedule:
-    # 原始數據每小時更新一次，設定為每小時的 0 分執行 (節省 Actions 額度)
+    # 數據每小時更新，設定每小時的 0 分執行一次
     - cron: '0 * * * *'
-  workflow_dispatch: # 允許手動點擊按鈕觸發執行
+  workflow_dispatch:
 
 permissions:
-  contents: write # 賦予 GitHub Actions 寫入/推送 Commit 的權限
+  contents: write
 
 jobs:
   build-and-run:
@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 安裝系統中文字型 (避免圖片中文字亂碼)
+      - name: 安裝系統中文字型
         run: |
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk
@@ -41,10 +41,9 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 將所有新增/變更的 CSV 與圖片加入 Git 追蹤
-          git add weather_history.csv missing_or_invalid_data.csv weather_chart.png stations_data/
+          # 將所有產生的檔案納入 Commit
+          git add weather_history.csv missing_or_invalid_data.csv weather_chart.png stations_data/ NotoSansCJKtc-Regular.otf
           
-          # 檢查是否有檔案變更，有變更才進行 commit 與 push
           if ! git diff --staged --quiet; then
             git commit -m "Auto update weather data & station files [skip ci]"
             git push
