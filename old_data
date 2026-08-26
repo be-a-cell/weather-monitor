@@ -1,0 +1,7 @@
+weather-monitor/
+├── old_data/                 <-- 1. 新增：存放舊資料的資料夾
+│   ├── old_data_template.csv <-- 2. 新增：舊資料公版檔
+│   └── 2020_2023_stationA.csv<-- 你的歷史舊資料檔 (檔名可自由決定)
+├── data/                     <-- 現有爬蟲/動態擷取的資料（若有）
+├── main.py                   <-- 核心整合與互動 UI 主程式
+└── requirements.txt
