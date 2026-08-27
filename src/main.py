@@ -140,11 +140,14 @@ new_df = pd.DataFrame(new_records)
 if invalid_records:
     invalid_df = pd.DataFrame(invalid_records)
     invalid_csv_path = BASE_DIR / "missing_or_invalid_data.csv"
-    if invalid_csv_path.exists():
-        exist_invalid_df = pd.read_csv(invalid_csv_path)
-        invalid_df = pd.concat(
-            [exist_invalid_df, invalid_df], ignore_index=True
-        ).drop_duplicates()
+    if invalid_csv_path.exists() and invalid_csv_path.stat().st_size > 0:
+        try:
+            exist_invalid_df = pd.read_csv(invalid_csv_path)
+            invalid_df = pd.concat(
+                [exist_invalid_df, invalid_df], ignore_index=True
+            ).drop_duplicates()
+        except Exception:
+            pass
     invalid_df.to_csv(invalid_csv_path, index=False, encoding="utf-8-sig")
 
 # ==========================================
@@ -153,17 +156,31 @@ if invalid_records:
 for s_id in target_stations:
     station_incoming = new_df[new_df["StationId"] == s_id].copy()
 
-    # 1. 嘗試讀取 historical_data/ 下的手動歷史檔案
+    # 1. 嘗試讀取 historical_data/ 下的手動歷史檔案 (包含空檔檢查)
     history_matches = list(HISTORICAL_DIR.glob(f"{s_id}_*.csv"))
     historical_df = pd.DataFrame()
     if history_matches:
-        historical_df = pd.read_csv(history_matches[0])
+        hist_file = history_matches[0]
+        if hist_file.stat().st_size > 0:
+            try:
+                historical_df = pd.read_csv(hist_file)
+            except pd.errors.EmptyDataError:
+                print(f"警告: 歷史檔案 {hist_file.name} 為空白檔案，已跳過。")
+            except Exception as e:
+                print(f"讀取歷史檔案 {hist_file.name} 失敗: {e}")
 
-    # 2. 嘗試讀取 stations_data/ 下既有的累積檔案
+    # 2. 嘗試讀取 stations_data/ 下既有的累積檔案 (包含空檔檢查)
     station_matches = list(STATION_DIR.glob(f"{s_id}_*.csv"))
     exist_df = pd.DataFrame()
     if station_matches:
-        exist_df = pd.read_csv(station_matches[0])
+        exist_file = station_matches[0]
+        if exist_file.stat().st_size > 0:
+            try:
+                exist_df = pd.read_csv(exist_file)
+            except pd.errors.EmptyDataError:
+                print(f"警告: 既有檔案 {exist_file.name} 為空白檔案，已跳過。")
+            except Exception as e:
+                print(f"讀取既有檔案 {exist_file.name} 失敗: {e}")
 
     # 3. 合併 historical + existing + newly_fetched
     combined_station_df = pd.concat(
@@ -189,7 +206,13 @@ for s_id in target_stations:
 # 3. 彙整歷史總表 weather_history.csv (存放在根目錄)
 # ==========================================
 all_station_files = list(STATION_DIR.glob("*.csv"))
-master_list = [pd.read_csv(f) for f in all_station_files]
+master_list = []
+for f in all_station_files:
+    if f.stat().st_size > 0:
+        try:
+            master_list.append(pd.read_csv(f))
+        except Exception:
+            pass
 
 master_df = pd.DataFrame()
 if master_list:
