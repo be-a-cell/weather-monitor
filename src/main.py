@@ -20,7 +20,7 @@ RAW_DIR = BASE_DIR / "raw"
 HISTORICAL_DIR = BASE_DIR / "historical_data"
 STATIONS_DIR = BASE_DIR / "stations_data"
 
-STATION_DIR.mkdir(parents=True, exist_ok=True)
+STATIONS_DIR.mkdir(parents=True, exist_ok=True)
 HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
 
 # ------------------------------------------
@@ -233,7 +233,7 @@ for s_id in target_stations:
                     print(f"讀取歷史檔案 {hist_file.name} 失敗: {e}")
 
     # 2. 讀取既有測站資料 (stations_data)
-    station_matches = list(STATION_DIR.glob(f"{s_id}_*.csv"))
+    station_matches = list(STATIONS_DIR.glob(f"{s_id}_*.csv"))
     exist_df = pd.DataFrame()
     if station_matches:
         for exist_file in station_matches:
@@ -267,13 +267,13 @@ for s_id in target_stations:
     output_df = combined_station_df.copy()
     output_df["datetime"] = output_df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
-    station_csv_path = STATION_DIR / f"{s_id}_{s_name}.csv"
+    station_csv_path = STATIONS_DIR / f"{s_id}_{s_name}.csv"
     output_df.to_csv(station_csv_path, index=False, encoding="utf-8-sig")
 
 # ==========================================
 # 3. 彙整歷史總表 (同時讀取 historical_data 與 stations_data)
 # ==========================================
-all_files = list(HISTORICAL_DIR.glob("*.csv")) + list(STATION_DIR.glob("*.csv"))
+all_files = list(HISTORICAL_DIR.glob("*.csv")) + list(STATIONS_DIR.glob("*.csv"))
 master_list = []
 
 for f in all_files:
