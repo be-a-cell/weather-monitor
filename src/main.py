@@ -11,11 +11,14 @@ import requests
 # ==========================================
 # 0. 路徑與基礎設定 (適應 src/ 結構)
 # ==========================================
+# 定義專案根目錄
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# 定義各功能資料夾路徑
 CONFIG_DIR = BASE_DIR / "config"
-STATION_DIR = BASE_DIR / "stations_data"
+RAW_DIR = BASE_DIR / "raw"
 HISTORICAL_DIR = BASE_DIR / "historical_data"
+STATIONS_DIR = BASE_DIR / "stations_data"
 
 STATION_DIR.mkdir(parents=True, exist_ok=True)
 HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
