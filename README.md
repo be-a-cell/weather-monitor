@@ -16,7 +16,7 @@ weather-monitor/
 │
 │  
 ├── weather_chart.png                # 產出的氣象視覺化圖表
-├── stations_data.csv
+├── weather_history.csv
 │
 ├── historical_data/                 # 歷史天氣資料 (手動補齊資料)
 │   ├── C0TA40_秀林.csv
