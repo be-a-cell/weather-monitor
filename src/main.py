@@ -11,48 +11,113 @@ import requests
 # ==========================================
 # 0. 路徑與基礎設定 (適應 src/ 結構)
 # ==========================================
-# 取得專案根目錄 (weather-monitor/)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# 定義各資料夾與檔案之根目錄路徑
 CONFIG_DIR = BASE_DIR / "config"
 STATION_DIR = BASE_DIR / "stations_data"
 HISTORICAL_DIR = BASE_DIR / "historical_data"
 
-# 建立所需目錄
 STATION_DIR.mkdir(parents=True, exist_ok=True)
 HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
 
-# 載入自訂中文字型檔 (包含安全降級機制)
+# ------------------------------------------
+# 徹底修復中文字型 (豆腐塊問題)
+# ------------------------------------------
 FONT_PATH = CONFIG_DIR / "NotoSansCJKtc-Regular.otf"
-font_loaded = False
+chosen_font_prop = None
 
+# 1. 嘗試載入本地 otf
 if FONT_PATH.exists():
     try:
         font_manager.fontManager.addfont(str(FONT_PATH))
-        font_prop = font_manager.FontProperties(fname=str(FONT_PATH))
-        mpl.rcParams["font.family"] = font_prop.get_name()
-        font_loaded = True
+        chosen_font_prop = font_manager.FontProperties(fname=str(FONT_PATH))
+        mpl.rcParams["font.family"] = chosen_font_prop.get_name()
         print(f"成功載入本地字型: {FONT_PATH}")
     except Exception as e:
-        print(f"本地字型載入失敗 ({e})，自動切換至系統預設中文字型。")
+        print(f"本地字型載入失敗 ({e})，準備搜尋系統字型...")
 
-# 若本地字型不存在或載入失敗，則改用系統內建中文字型
-if not font_loaded:
-    mpl.rcParams["font.sans-serif"] = [
-        "Noto Sans CJK TC",
-        "Noto Sans TC",
-        "WenQuanYi Micro Hei",
-        "DejaVu Sans",
+# 2. 若本地字型不可用，搜尋 Linux / Ubuntu 系統安裝的中文字型
+if chosen_font_prop is None:
+    system_fonts = font_manager.findSystemFonts(fontpaths=None, fontext="ttf")
+    cjk_fonts = [
+        f
+        for f in system_fonts
+        if any(
+            k in Path(f).name.lower()
+            for k in ["notosanscjk", "wqy", "zenhei", "microhei", "kai", "ming"]
+        )
     ]
+    if cjk_fonts:
+        chosen_font_prop = font_manager.FontProperties(fname=cjk_fonts[0])
+        mpl.rcParams["font.family"] = chosen_font_prop.get_name()
+        print(f"成功套用系統中文字型: {cjk_fonts[0]}")
+    else:
+        # 備用回退設定
+        mpl.rcParams["font.sans-serif"] = [
+            "Noto Sans CJK TC",
+            "Noto Sans TC",
+            "WenQuanYi Micro Hei",
+            "DejaVu Sans",
+        ]
+        chosen_font_prop = font_manager.FontProperties(
+            family=["Noto Sans CJK TC", "DejaVu Sans"]
+        )
 
-mpl.rcParams["axes.unicode_minus"] = False  # 解決負號顯示異常問題
+mpl.rcParams["axes.unicode_minus"] = False
 
 # ==========================================
-# 時間軸自主調整 (格式: "2026-08-01" 或 None)
+# 輔助函式：標準化 CSV 欄位名稱
 # ==========================================
-START_DATE = None
-END_DATE = None
+def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """清理並統一不同來源 CSV 的欄位名稱與格式"""
+    if df.empty:
+        return df
+
+    # 清除欄位前後空白
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # 針對 historical_data 可能出現的 rainfallDateTime 或其他命名進行對映
+    rename_map = {}
+    for col in df.columns:
+        c_lower = col.lower()
+        if "stationid" in c_lower or c_lower == "station_id":
+            rename_map[col] = "station_id"
+        elif "stationname" in c_lower or c_lower == "station_name":
+            rename_map[col] = "station_name"
+        elif "datetime" in c_lower or c_lower == "obs_time":
+            rename_map[col] = "datetime"
+        elif "temp" in c_lower or c_lower == "temperature":
+            rename_map[col] = "temperature"
+        elif "rain" in c_lower:  # 自動捕捉 rainfall 或 rainfallDateTime
+            rename_map[col] = "rainfall"
+
+    df = df.rename(columns=rename_map)
+
+    # 確保所需標準欄位均存在
+    required_cols = [
+        "station_id",
+        "station_name",
+        "datetime",
+        "temperature",
+        "rainfall",
+    ]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = None
+
+    # 只保留這 5 個標準欄位
+    df = df[required_cols].copy()
+
+    # 資料型態轉型
+    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    df["temperature"] = pd.to_numeric(df["temperature"], errors="coerce")
+    df["rainfall"] = pd.to_numeric(df["rainfall"], errors="coerce")
+
+    # 移除無效時間
+    df = df.dropna(subset=["datetime"])
+
+    return df
+
 
 # ==========================================
 # 1. 抓取氣象署 API 資料
@@ -79,7 +144,6 @@ if "records" in data and "Station" in data["records"]:
             obs_time = station.get("ObsTime", {}).get("DateTime", "")
             weather_elem = station.get("WeatherElement", {})
 
-            # 氣溫讀取與檢查
             raw_temp = weather_elem.get("AirTemperature")
             temp_is_invalid = raw_temp in [
                 None,
@@ -91,7 +155,6 @@ if "records" in data and "Station" in data["records"]:
             ]
             temp = float(raw_temp) if not temp_is_invalid else None
 
-            # 雨量讀取與檢查
             raw_rain = weather_elem.get("Now", {}).get("Precipitation")
             rain_is_invalid = raw_rain in [
                 None,
@@ -103,16 +166,15 @@ if "records" in data and "Station" in data["records"]:
             ]
             rain = float(raw_rain) if not rain_is_invalid else None
 
-            # 記錄異常數據
             if temp_is_invalid or rain_is_invalid:
                 invalid_records.append(
                     {
-                        "DateTime": obs_time,
-                        "StationId": s_id,
-                        "StationName": s_name,
-                        "RawTemperature": raw_temp,
-                        "RawRainfall": raw_rain,
-                        "Issue": (
+                        "datetime": obs_time,
+                        "station_id": s_id,
+                        "station_name": s_name,
+                        "raw_temperature": raw_temp,
+                        "raw_rainfall": raw_rain,
+                        "issue": (
                             "氣溫異常"
                             if temp_is_invalid and not rain_is_invalid
                             else (
@@ -126,17 +188,17 @@ if "records" in data and "Station" in data["records"]:
 
             new_records.append(
                 {
-                    "DateTime": obs_time,
-                    "StationId": s_id,
-                    "StationName": s_name,
-                    "Temperature": temp,
-                    "Rainfall": rain if rain is not None else 0.0,
+                    "station_id": s_id,
+                    "station_name": s_name,
+                    "datetime": obs_time,
+                    "temperature": temp,
+                    "rainfall": rain if rain is not None else 0.0,
                 }
             )
 
-new_df = pd.DataFrame(new_records)
+new_df = normalize_dataframe(pd.DataFrame(new_records))
 
-# 匯出缺失/異常資料至根目錄獨立 CSV
+# 記錄異常資料
 if invalid_records:
     invalid_df = pd.DataFrame(invalid_records)
     invalid_csv_path = BASE_DIR / "missing_or_invalid_data.csv"
@@ -154,35 +216,37 @@ if invalid_records:
 # 2. 獨立測站數據更新與寫入 (整合 historical_data)
 # ==========================================
 for s_id in target_stations:
-    station_incoming = new_df[new_df["StationId"] == s_id].copy()
+    station_incoming = (
+        new_df[new_df["station_id"] == s_id].copy()
+        if not new_df.empty
+        else pd.DataFrame()
+    )
 
-    # 1. 嘗試讀取 historical_data/ 下的手動歷史檔案 (包含空檔檢查)
+    # 1. 讀取 historical_data/ 下對應的 CSV
     history_matches = list(HISTORICAL_DIR.glob(f"{s_id}_*.csv"))
     historical_df = pd.DataFrame()
     if history_matches:
         hist_file = history_matches[0]
         if hist_file.stat().st_size > 0:
             try:
-                historical_df = pd.read_csv(hist_file)
-            except pd.errors.EmptyDataError:
-                print(f"警告: 歷史檔案 {hist_file.name} 為空白檔案，已跳過。")
+                raw_hdf = pd.read_csv(hist_file)
+                historical_df = normalize_dataframe(raw_hdf)
             except Exception as e:
                 print(f"讀取歷史檔案 {hist_file.name} 失敗: {e}")
 
-    # 2. 嘗試讀取 stations_data/ 下既有的累積檔案 (包含空檔檢查)
+    # 2. 讀取 stations_data/ 下對應的 CSV
     station_matches = list(STATION_DIR.glob(f"{s_id}_*.csv"))
     exist_df = pd.DataFrame()
     if station_matches:
         exist_file = station_matches[0]
         if exist_file.stat().st_size > 0:
             try:
-                exist_df = pd.read_csv(exist_file)
-            except pd.errors.EmptyDataError:
-                print(f"警告: 既有檔案 {exist_file.name} 為空白檔案，已跳過。")
+                raw_edf = pd.read_csv(exist_file)
+                exist_df = normalize_dataframe(raw_edf)
             except Exception as e:
                 print(f"讀取既有檔案 {exist_file.name} 失敗: {e}")
 
-    # 3. 合併 historical + existing + newly_fetched
+    # 3. 合併舊歷史、已有資料與 API 新資料
     combined_station_df = pd.concat(
         [historical_df, exist_df, station_incoming], ignore_index=True
     )
@@ -190,14 +254,20 @@ for s_id in target_stations:
     if combined_station_df.empty:
         continue
 
-    # 取得真正的測站名稱
-    s_name = combined_station_df["StationName"].dropna().iloc[0]
+    # 規範化處理與去除重複項目
+    combined_station_df.drop_duplicates(
+        subset=["station_id", "datetime"], inplace=True
+    )
+    combined_station_df.sort_values(by="datetime", inplace=True)
+
+    # 格式化 datetime 為字串再存檔
+    combined_station_df["datetime"] = combined_station_df[
+        "datetime"
+    ].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    s_name = combined_station_df["station_name"].dropna().iloc[0]
     station_csv_path = STATION_DIR / f"{s_id}_{s_name}.csv"
 
-    combined_station_df.drop_duplicates(
-        subset=["DateTime", "StationId"], inplace=True
-    )
-    combined_station_df.sort_values(by="DateTime", inplace=True)
     combined_station_df.to_csv(
         station_csv_path, index=False, encoding="utf-8-sig"
     )
@@ -207,107 +277,120 @@ for s_id in target_stations:
 # ==========================================
 all_station_files = list(STATION_DIR.glob("*.csv"))
 master_list = []
+
 for f in all_station_files:
     if f.stat().st_size > 0:
         try:
-            master_list.append(pd.read_csv(f))
-        except Exception:
-            pass
+            raw_f = pd.read_csv(f)
+            norm_f = normalize_dataframe(raw_f)
+            if not norm_f.empty:
+                master_list.append(norm_f)
+        except Exception as e:
+            print(f"彙整總表時讀取 {f.name} 失敗: {e}")
 
 master_df = pd.DataFrame()
 if master_list:
     master_df = pd.concat(master_list, ignore_index=True)
-    master_df.drop_duplicates(subset=["DateTime", "StationId"], inplace=True)
-    master_df.sort_values(by=["DateTime", "StationId"], inplace=True)
-    master_df.to_csv(
+    master_df.drop_duplicates(subset=["station_id", "datetime"], inplace=True)
+    master_df.sort_values(by=["datetime", "station_id"], inplace=True)
+
+    # 格式化日期並匯出總表
+    export_master_df = master_df.copy()
+    export_master_df["datetime"] = export_master_df["datetime"].dt.strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    export_master_df.to_csv(
         BASE_DIR / "weather_history.csv", index=False, encoding="utf-8-sig"
     )
+    print(f"成功更新總表 weather_history.csv，共 {len(export_master_df)} 筆資料。")
 
 # ==========================================
 # 4. 繪製圖表 (輸出至根目錄 weather_chart.png)
 # ==========================================
-if master_list and not master_df.empty:
+if not master_df.empty:
     plot_df = master_df.copy()
-
-    plot_df["DateTime"] = pd.to_datetime(plot_df["DateTime"])
-    plot_df["Temperature"] = pd.to_numeric(
-        plot_df["Temperature"], errors="coerce"
-    )
-    plot_df["Rainfall"] = pd.to_numeric(plot_df["Rainfall"], errors="coerce")
-
     plot_df["StationLabel"] = (
-        plot_df["StationId"] + " " + plot_df["StationName"]
+        plot_df["station_id"] + " " + plot_df["station_name"]
     )
+    plot_df.sort_values(by="datetime", inplace=True)
 
-    # 時間選擇性過濾
-    if START_DATE:
-        plot_df = plot_df[plot_df["DateTime"] >= pd.to_datetime(START_DATE)]
-    if END_DATE:
-        plot_df = plot_df[plot_df["DateTime"] <= pd.to_datetime(END_DATE)]
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
 
-    plot_df.sort_values(by="DateTime", inplace=True)
+    station_labels = plot_df["StationLabel"].unique()
+    num_stations = len(station_labels)
 
-    if not plot_df.empty:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+    # 【上圖】氣溫折線圖
+    for label in station_labels:
+        group = plot_df[plot_df["StationLabel"] == label].dropna(
+            subset=["temperature"]
+        )
+        if group.empty:
+            continue
+        ax1.plot(
+            group["datetime"],
+            group["temperature"],
+            marker="o",
+            markersize=3,
+            linewidth=1.5,
+            label=label,
+        )
 
-        station_labels = plot_df["StationLabel"].unique()
-        num_stations = len(station_labels)
+    t_title = ax1.set_title("即時氣溫變化圖 (°C)", fontsize=14, fontweight="bold")
+    t_ylabel = ax1.set_ylabel("氣溫 (°C)", fontsize=12)
+    ax1.grid(True, linestyle="--", alpha=0.5)
+    leg1 = ax1.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-        # 【上圖】氣溫折線圖
-        for label in station_labels:
-            group = plot_df[plot_df["StationLabel"] == label].dropna(
-                subset=["Temperature"]
-            )
-            if group.empty:
-                continue
-            ax1.plot(
-                group["DateTime"],
-                group["Temperature"],
-                marker="o",
-                markersize=3,
-                linewidth=1.5,
-                label=label,
-            )
+    # 【下圖】雨量直條圖
+    single_bar_width = 0.012 / max(num_stations, 1)
 
-        ax1.set_title("即時氣溫變化圖 (°C)", fontsize=14, fontweight="bold")
-        ax1.set_ylabel("氣溫 (°C)", fontsize=12)
-        ax1.grid(True, linestyle="--", alpha=0.5)
-        ax1.legend(loc="upper left", bbox_to_anchor=(1, 1))
+    for i, label in enumerate(station_labels):
+        group = plot_df[plot_df["StationLabel"] == label].dropna(
+            subset=["rainfall"]
+        )
+        if group.empty:
+            continue
 
-        # 【下圖】雨量直條圖
-        single_bar_width = 0.012 / max(num_stations, 1)
+        offset = (i - (num_stations - 1) / 2) * single_bar_width
+        x_dates = mdates.date2num(group["datetime"]) + offset
 
-        for i, label in enumerate(station_labels):
-            group = plot_df[plot_df["StationLabel"] == label].dropna(
-                subset=["Rainfall"]
-            )
-            if group.empty:
-                continue
+        ax2.bar(
+            x_dates,
+            group["rainfall"],
+            width=single_bar_width,
+            alpha=0.7,
+            label=label,
+        )
 
-            offset = (i - (num_stations - 1) / 2) * single_bar_width
-            x_dates = mdates.date2num(group["DateTime"]) + offset
+    r_title = ax2.set_title("即時雨量直條圖 (mm)", fontsize=14, fontweight="bold")
+    r_xlabel = ax2.set_xlabel("時間 (DateTime)", fontsize=12)
+    r_ylabel = ax2.set_ylabel("雨量 (mm)", fontsize=12)
+    ax2.grid(True, linestyle="--", alpha=0.5)
+    leg2 = ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-            ax2.bar(
-                x_dates,
-                group["Rainfall"],
-                width=single_bar_width,
-                alpha=0.7,
-                label=label,
-            )
+    # X 軸時間軸格式設定
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
+    fig.autofmt_xdate(rotation=45)
 
-        ax2.set_title("即時雨量直條圖 (mm)", fontsize=14, fontweight="bold")
-        ax2.set_xlabel("時間 (DateTime)", fontsize=12)
-        ax2.set_ylabel("雨量 (mm)", fontsize=12)
-        ax2.grid(True, linestyle="--", alpha=0.5)
-        ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
+    # 顯式為圖表上所有中文元件指定字型 Properties (徹底告別豆腐塊)
+    if chosen_font_prop:
+        t_title.set_fontproperties(chosen_font_prop)
+        t_ylabel.set_fontproperties(chosen_font_prop)
+        r_title.set_fontproperties(chosen_font_prop)
+        r_xlabel.set_fontproperties(chosen_font_prop)
+        r_ylabel.set_fontproperties(chosen_font_prop)
 
-        # X 軸時間軸格式設定
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
-        fig.autofmt_xdate(rotation=45)
+        for text in leg1.get_texts():
+            text.set_fontproperties(chosen_font_prop)
+        for text in leg2.get_texts():
+            text.set_fontproperties(chosen_font_prop)
 
-        plt.tight_layout()
+        for ax in [ax1, ax2]:
+            for label in ax.get_xticklabels() + ax.get_yticklabels():
+                label.set_fontproperties(chosen_font_prop)
 
-        chart_filename = BASE_DIR / "weather_chart.png"
-        plt.savefig(chart_filename, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"圖表已成功生成: {chart_filename}")
+    plt.tight_layout()
+
+    chart_filename = BASE_DIR / "weather_chart.png"
+    plt.savefig(chart_filename, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"圖表已成功生成: {chart_filename}")
