@@ -106,8 +106,6 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     
     if isinstance(df["datetime"].dtype, pd.DatetimeTZDtype) or df["datetime"].dt.tz is not None:
         df["datetime"] = df["datetime"].dt.tz_localize(None)
-    
-        df["datetime"] = df["datetime"].dt.tz_localize(None)
 
     df["temperature"] = pd.to_numeric(df["temperature"], errors="coerce")
     df["rainfall"] = pd.to_numeric(df["rainfall"], errors="coerce")
@@ -301,62 +299,8 @@ if master_list:
     print(f"成功更新總表 weather_history.csv，共 {len(export_master_df)} 筆資料。")
 
 # ==========================================
-# 4. 繪製圖表 (修復雨量圖與柱狀圖寬度問題)
+# 4. 繪製圖表 (包含自訂顏色對應)
 # ==========================================
-# 1. 建立測站與顏色的對應字典 (可使用 HEX 色碼或 Matplotlib 顏色名稱)
-    STATION_COLORS = {
-        "C0TA40": "#FF5809",  # 橘紅色
-        "C0TA50": "#A23400",  # 棕紅色
-        "C0Z310": "#1F4E79",   # 深藍色
-        "C0T9D0": "#5B9BD5",   # 藍色
-        "C0Z220": "#70AD47",   # 綠色
-        "C0Z230": "#DEEBF7"   # 淺藍色
-    }
-
-    # 【上圖】氣溫折線圖
-    for label in station_labels:
-        s_id = label.split()[0]  # 取得測站 ID (例如 C0TA40)
-        group = plot_df[plot_df["StationLabel"] == label].dropna(subset=["temperature"])
-        if group.empty:
-            continue
-        
-        # 指定 color 參數
-        ax1.plot(
-            group["datetime"],
-            group["temperature"],
-            marker="o",
-            markersize=1.5,
-            linewidth=1,
-            label=label,
-            color=STATION_COLORS.get(s_id, "#333333")  # 若無設定則預設灰色
-        )
-
-    # 【下圖】雨量直條圖
-    for label in station_labels:
-        s_id = label.split()[0]
-        group = plot_df[plot_df["StationLabel"] == label].dropna(subset=["rainfall"])
-        if group.empty:
-            continue
-
-        rain_positive = group[group["rainfall"] > 0]
-
-        if not rain_positive.empty:
-            ax2.bar(
-                rain_positive["datetime"],
-                rain_positive["rainfall"],
-                width=dynamic_bar_width,
-                alpha=0.6,
-                label=label,
-                color=STATION_COLORS.get(s_id, "#333333")  # 使用相同測站顏色
-            )
-        else:
-            ax2.plot(
-                group["datetime"].iloc[:1],
-                group["rainfall"].iloc[:1],
-                alpha=0,
-                label=label,
-                color=STATION_COLORS.get(s_id, "#333333")
-            )
 if not master_df.empty:
     plot_df = master_df.copy()
     plot_df["StationLabel"] = (
@@ -369,14 +313,25 @@ if not master_df.empty:
     # 取得所有獨立的測站標籤
     station_labels = plot_df["StationLabel"].unique()
 
-    # 計算全域時間跨度以設定合理的直條圖寬度 (預設寬度為總天數的 0.5%)
+    # 建立測站與顏色的對應字典
+    STATION_COLORS = {
+        "C0TA40": "#FF5809",  # 橘紅色
+        "C0TA50": "#A23400",  # 棕紅色
+        "C0Z310": "#1F4E79",  # 深藍色
+        "C0T9D0": "#5B9BD5",  # 藍色
+        "C0Z220": "#70AD47",  # 綠色
+        "C0Z230": "#3399FF"   # 亮藍色
+    }
+
+    # 計算全域時間跨度以設定合理的直條圖寬度
     total_days = (
         plot_df["datetime"].max() - plot_df["datetime"].min()
     ).total_seconds() / 86400
-    dynamic_bar_width = max(total_days * 0.003, 0.5)  # 最少 0.5 天寬度避免消失
+    dynamic_bar_width = max(total_days * 0.003, 0.5)
 
     # 【上圖】氣溫折線圖
     for label in station_labels:
+        s_id = label.split()[0]  # 取得測站 ID (例如 C0TA40)
         group = plot_df[plot_df["StationLabel"] == label].dropna(
             subset=["temperature"]
         )
@@ -389,6 +344,7 @@ if not master_df.empty:
             markersize=1.5,
             linewidth=1,
             label=label,
+            color=STATION_COLORS.get(s_id, "#333333")  # 套用自訂顏色
         )
 
     t_title = ax1.set_title("即時氣溫變化圖 (°C)", fontsize=14, fontweight="bold")
@@ -396,15 +352,15 @@ if not master_df.empty:
     ax1.grid(True, linestyle="--", alpha=0.5)
     leg1 = ax1.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-    # 【下圖】雨量直條圖 / 折線圖 (修復雨量無法顯示問題)
+    # 【下圖】雨量直條圖 / 折線圖
     for label in station_labels:
+        s_id = label.split()[0]
         group = plot_df[plot_df["StationLabel"] == label].dropna(
             subset=["rainfall"]
         )
         if group.empty:
             continue
 
-        # 過濾出有雨量數據 (>0) 來畫顯著柱狀圖，避免 0mm 佔滿圖表
         rain_positive = group[group["rainfall"] > 0]
 
         if not rain_positive.empty:
@@ -414,6 +370,7 @@ if not master_df.empty:
                 width=dynamic_bar_width,
                 alpha=0.6,
                 label=label,
+                color=STATION_COLORS.get(s_id, "#333333")  # 套用自訂顏色
             )
         else:
             # 若無降雨，畫一條隱形點維持 Legend
@@ -422,6 +379,7 @@ if not master_df.empty:
                 group["rainfall"].iloc[:1],
                 alpha=0,
                 label=label,
+                color=STATION_COLORS.get(s_id, "#333333")
             )
 
     r_title = ax2.set_title("即時雨量直條圖 (mm)", fontsize=14, fontweight="bold")
@@ -430,12 +388,12 @@ if not master_df.empty:
     ax2.grid(True, linestyle="--", alpha=0.5)
     leg2 = ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-    # 自動調整雨量 Y 軸上限，避免雨量極小導致沒反應
+    # 自動調整雨量 Y 軸上限
     max_rain = plot_df["rainfall"].max()
     if pd.notna(max_rain) and max_rain > 0:
         ax2.set_ylim(0, max_rain * 1.1)
     else:
-        ax2.set_ylim(0, 10)  # 預設上限
+        ax2.set_ylim(0, 10)
 
     # X 軸時間軸格式設定
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
