@@ -2,10 +2,9 @@ name: Run Weather Monitor
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # 每 15 timezone: 分鐘自動執行一次
+    - cron: '*/15 * * * *'  # 每 15 分鐘自動執行一次
   workflow_dispatch:       # 支援手動觸發
 
-# 授予 GitHub Actions 寫入權限 (用於提交 Commit)
 permissions:
   contents: write
 
