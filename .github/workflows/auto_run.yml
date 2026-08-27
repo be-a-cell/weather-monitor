@@ -45,7 +45,7 @@ jobs:
           git add .
 
           if ! git diff --staged --quiet; then
-            git commit -m "Auto update weather data & station files [skip ci]"
+            git commit -m "Auto update weather data & station files"
             git push
           else
             echo "沒有新數據變更，跳過 Commit。"
