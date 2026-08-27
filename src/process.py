@@ -1,25 +1,48 @@
 import glob
 import os
+from pathlib import Path
 import pandas as pd
 
+# 取得專案根目錄 (weather-monitor/)
+BASE_DIR = Path(__file__).resolve().parent.parent
+RAW_DIR = BASE_DIR / "raw"
+HISTORICAL_DIR = BASE_DIR / "historical_data"
 
-def process_weather_data(input_dir="raw_data", output_file="cleaned_data.csv"):
-    all_data = []
+HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
 
-    for file_path in glob.glob(os.path.join(input_dir, "*.csv")):
-        filename = os.path.basename(file_path)
+# 測站 ID 與中文名稱對照表 (確保存入 historical_data 時有名稱)
+STATION_MAP = {
+    "C0TA40": "秀林",
+    "C0TA50": "和仁",
+    "C0Z310": "清水斷崖",
+    "C0T9D0": "和中",
+    "C0Z220": "和平林道",
+    "C0Z230": "和平",
+}
 
-        # 1. 自動從檔名提取測站與日期 (例: C0Z220-2026-08-26.csv)
-        station_id, date_str = filename.replace(".csv", "").split("-", 1)
 
-        # 2. 跳過第 0 行中文欄位，直接以第 1 行英文欄位作為欄位名
+def process_raw_files():
+    raw_files = list(RAW_DIR.glob("*.csv"))
+    if not raw_files:
+        print("未在 raw/ 目錄下發現 CSV 檔案。")
+        return
+
+    # 按測站分組收集資料
+    station_data_list = {}
+
+    for file_path in raw_files:
+        filename = file_path.name
+        # 解析檔名例: C0Z220-2026-08-26.csv
+        try:
+            station_id, date_str = filename.replace(".csv", "").split("-", 1)
+        except ValueError:
+            continue
+
         df = pd.read_csv(file_path, header=1, encoding="utf-8-sig")
-
-        # 3. 補充 Metadata 欄位
         df.insert(0, "Station", station_id)
         df.insert(1, "Date", date_str)
 
-        # 4. 校正時間格式：ObsTime 補零，並轉為標準 ISO 時間戳 (處理 24 時跨日問題)
+        # 處理 ObsTime 與 24 時跨夜邏輯
         df["ObsTime"] = df["ObsTime"].astype(str).str.zfill(2)
         df["Datetime"] = pd.to_datetime(
             date_str + " " + df["ObsTime"].replace({"24": "00"}),
@@ -27,10 +50,8 @@ def process_weather_data(input_dir="raw_data", output_file="cleaned_data.csv"):
         )
         df.loc[df["ObsTime"] == "24", "Datetime"] += pd.Timedelta(days=1)
 
-        # 5. 氣象特殊符號清洗 (例如雨量 'T' 轉 0.05，異常符號 '&' 或 '-' 轉 NaN)
+        # 氣象異常值清洗
         df["Precp"] = df["Precp"].replace({"T": 0.05, "x": None, "&": None})
-
-        # 6. 強制轉為數值型態 (非數字會自動轉為 NaN)
         num_cols = [
             "StnPres",
             "Temperature",
@@ -43,16 +64,31 @@ def process_weather_data(input_dir="raw_data", output_file="cleaned_data.csv"):
         ]
         df[num_cols] = df[num_cols].apply(pd.to_numeric, errors="coerce")
 
-        all_data.append(df)
+        if station_id not in station_data_list:
+            station_data_list[station_id] = []
+        station_data_list[station_id].append(df)
 
-    if all_data:
-        merged_df = pd.concat(all_data, ignore_index=True)
-        merged_df.sort_values(by=["Station", "Datetime"], inplace=True)
-        merged_df.to_csv(output_file, index=False, encoding="utf-8-sig")
-        print(
-            f"成功合併 {len(all_data)} 個檔案，共 {len(merged_df)} 筆資料，輸出至 {output_file}"
-        )
+    # 寫入 historical_data/ 資料夾
+    for station_id, df_list in station_data_list.items():
+        combined_df = pd.concat(df_list, ignore_index=True)
+        combined_df.sort_values(by="Datetime", inplace=True)
+        combined_df.drop_duplicates(subset=["Datetime"], inplace=True)
+
+        st_name = STATION_MAP.get(station_id, "未知")
+        out_name = f"{station_id}_{st_name}.csv"
+        out_path = HISTORICAL_DIR / out_name
+
+        # 若已存在舊歷史檔則進行合併去重
+        if out_path.exists():
+            old_df = pd.read_csv(out_path)
+            combined_df = pd.concat([old_df, combined_df], ignore_index=True)
+            combined_df.drop_duplicates(
+                subset=["Datetime"], keep="last", inplace=True
+            )
+
+        combined_df.to_csv(out_path, index=False, encoding="utf-8-sig")
+        print(f"已更新歷史資料：{out_path}")
 
 
 if __name__ == "__main__":
-    process_weather_data()
+    process_raw_files()
