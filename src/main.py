@@ -303,6 +303,60 @@ if master_list:
 # ==========================================
 # 4. 繪製圖表 (修復雨量圖與柱狀圖寬度問題)
 # ==========================================
+# 1. 建立測站與顏色的對應字典 (可使用 HEX 色碼或 Matplotlib 顏色名稱)
+    STATION_COLORS = {
+        "C0TA40": "#FF5809",  # 橘紅色
+        "C0TA50": "#A23400",  # 棕紅色
+        "C0Z310": "#1F4E79"   # 深藍色
+        "C0T9D0": "#5B9BD5"   # 藍色
+        "C0Z220": "#70AD47"   # 綠色
+        "C0Z230": "#DEEBF7"   # 淺藍色
+    }
+
+    # 【上圖】氣溫折線圖
+    for label in station_labels:
+        s_id = label.split()[0]  # 取得測站 ID (例如 C0TA40)
+        group = plot_df[plot_df["StationLabel"] == label].dropna(subset=["temperature"])
+        if group.empty:
+            continue
+        
+        # 指定 color 參數
+        ax1.plot(
+            group["datetime"],
+            group["temperature"],
+            marker="o",
+            markersize=1.5,
+            linewidth=1,
+            label=label,
+            color=STATION_COLORS.get(s_id, "#333333")  # 若無設定則預設灰色
+        )
+
+    # 【下圖】雨量直條圖
+    for label in station_labels:
+        s_id = label.split()[0]
+        group = plot_df[plot_df["StationLabel"] == label].dropna(subset=["rainfall"])
+        if group.empty:
+            continue
+
+        rain_positive = group[group["rainfall"] > 0]
+
+        if not rain_positive.empty:
+            ax2.bar(
+                rain_positive["datetime"],
+                rain_positive["rainfall"],
+                width=dynamic_bar_width,
+                alpha=0.6,
+                label=label,
+                color=STATION_COLORS.get(s_id, "#333333")  # 使用相同測站顏色
+            )
+        else:
+            ax2.plot(
+                group["datetime"].iloc[:1],
+                group["rainfall"].iloc[:1],
+                alpha=0,
+                label=label,
+                color=STATION_COLORS.get(s_id, "#333333")
+            )
 if not master_df.empty:
     plot_df = master_df.copy()
     plot_df["StationLabel"] = (
