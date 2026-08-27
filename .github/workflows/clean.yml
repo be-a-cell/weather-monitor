@@ -1,32 +1,42 @@
-name: Auto Clean Weather Data
+name: Clean Raw Data to Historical Data
 
 on:
   push:
     paths:
-      - 'raw_data/*.csv'
+      - 'raw/*.csv'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  clean-data:
+  clean-and-organize:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install Pandas
-        run: pip install pandas
-
-      - name: Run script
-        run: python process.py
-
-      - name: Commit cleaned file
+      - name: Install dependencies
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add cleaned_data.csv
-          git commit -m "Auto-cleaned weather datasets [skip ci]" || exit 0
-          git push
+          python -m pip install --upgrade pip
+          pip install pandas
+
+      - name: Run Process Script
+        run: python src/process.py
+
+      - name: Commit cleaned historical data
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add historical_data/
+          if ! git diff --staged --quiet; then
+            git commit -m "Auto: process raw files to historical_data [skip ci]"
+            git push
+          else
+            echo "無新增資料需要提交。"
+          fi
