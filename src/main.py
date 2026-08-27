@@ -103,10 +103,10 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df[required_cols].copy()
 
     df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-    if (
-        pd.api.types.is_datetime64tz_dtype(df["datetime"])
-        or df["datetime"].dt.tz is not None
-    ):
+    
+    if isinstance(df["datetime"].dtype, pd.DatetimeTZDtype) or df["datetime"].dt.tz is not None:
+    df["datetime"] = df["datetime"].dt.tz_localize(None)
+    
         df["datetime"] = df["datetime"].dt.tz_localize(None)
 
     df["temperature"] = pd.to_numeric(df["temperature"], errors="coerce")
@@ -366,6 +366,7 @@ if not master_df.empty:
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
 
+    # 取得所有獨立的測站標籤
     station_labels = plot_df["StationLabel"].unique()
 
     # 計算全域時間跨度以設定合理的直條圖寬度 (預設寬度為總天數的 0.5%)
