@@ -1,39 +1,49 @@
 import glob
 import os
-import shutil
+from pathlib import Path
 import matplotlib as mpl
 import matplotlib.dates as mdates
+from matplotlib import font_manager
 import matplotlib.pyplot as plt
 import pandas as pd
 import requests
 
 # ==========================================
-# 0. 中文字型與全域設定 (徹底解決 Linux/GitHub Actions 豆腐塊)
+# 0. 路徑與基礎設定 (適應 src/ 結構)
 # ==========================================
-# 清除 Matplotlib 快取，確保能載入 Ubuntu 系統剛安裝的中文字型
-try:
-    shutil.rmtree(mpl.get_cachedir())
-except Exception:
-    pass
+# 取得專案根目錄 (weather-monitor/)
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-# 設定優先使用的繁體中文字型名稱
-mpl.rcParams["font.sans-serif"] = [
-    "Noto Sans CJK TC",
-    "Noto Sans CJK JP",
-    "Noto Sans TC",
-    "WenQuanYi Micro Hei",
-    "DejaVu Sans",
-]
-mpl.rcParams["axes.unicode_minus"] = False  # 解決負號變方塊問題
+# 定義各資料夾與檔案之根目錄路徑
+CONFIG_DIR = BASE_DIR / "config"
+STATION_DIR = BASE_DIR / "stations_data"
+HISTORICAL_DIR = BASE_DIR / "historical_data"
+
+# 建立所需目錄
+STATION_DIR.mkdir(parents=True, exist_ok=True)
+HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
+
+# 載入自訂中文字型檔 (config/NotoSansCJKtc-Regular.otf)
+FONT_PATH = CONFIG_DIR / "NotoSansCJKtc-Regular.otf"
+if FONT_PATH.exists():
+    font_manager.fontManager.addfont(str(FONT_PATH))
+    font_prop = font_manager.FontProperties(fname=str(FONT_PATH))
+    mpl.rcParams["font.family"] = font_prop.get_name()
+else:
+    # 備用系統字型設定
+    mpl.rcParams["font.sans-serif"] = [
+        "Noto Sans CJK TC",
+        "Noto Sans TC",
+        "DejaVu Sans",
+    ]
+
+mpl.rcParams["axes.unicode_minus"] = False  # 解決負號顯示異常問題
 
 # ==========================================
 # 時間軸自主調整 (格式: "2026-08-01" 或 None)
 # ==========================================
 START_DATE = None
 END_DATE = None
-
-STATION_DIR = "stations_data"
-os.makedirs(STATION_DIR, exist_ok=True)
 
 # ==========================================
 # 1. 抓取氣象署 API 資料
@@ -117,11 +127,11 @@ if "records" in data and "Station" in data["records"]:
 
 new_df = pd.DataFrame(new_records)
 
-# 匯出缺失/異常資料至獨立 CSV
+# 匯出缺失/異常資料至根目錄獨立 CSV
 if invalid_records:
     invalid_df = pd.DataFrame(invalid_records)
-    invalid_csv_path = "missing_or_invalid_data.csv"
-    if os.path.exists(invalid_csv_path):
+    invalid_csv_path = BASE_DIR / "missing_or_invalid_data.csv"
+    if invalid_csv_path.exists():
         exist_invalid_df = pd.read_csv(invalid_csv_path)
         invalid_df = pd.concat(
             [exist_invalid_df, invalid_df], ignore_index=True
@@ -129,23 +139,34 @@ if invalid_records:
     invalid_df.to_csv(invalid_csv_path, index=False, encoding="utf-8-sig")
 
 # ==========================================
-# 2. 獨立測站數據更新與寫入
+# 2. 獨立測站數據更新與寫入 (整合 historical_data)
 # ==========================================
 for s_id in target_stations:
     station_incoming = new_df[new_df["StationId"] == s_id].copy()
-    if station_incoming.empty:
+
+    # 1. 嘗試讀取 historical_data/ 下的手動歷史檔案
+    history_matches = list(HISTORICAL_DIR.glob(f"{s_id}_*.csv"))
+    historical_df = pd.DataFrame()
+    if history_matches:
+        historical_df = pd.read_csv(history_matches[0])
+
+    # 2. 嘗試讀取 stations_data/ 下既有的累積檔案
+    station_matches = list(STATION_DIR.glob(f"{s_id}_*.csv"))
+    exist_df = pd.DataFrame()
+    if station_matches:
+        exist_df = pd.read_csv(station_matches[0])
+
+    # 3. 合併 historical + existing + newly_fetched
+    combined_station_df = pd.concat(
+        [historical_df, exist_df, station_incoming], ignore_index=True
+    )
+
+    if combined_station_df.empty:
         continue
 
-    s_name = station_incoming["StationName"].iloc[0]
-    station_csv_path = os.path.join(STATION_DIR, f"{s_id}_{s_name}.csv")
-
-    if os.path.exists(station_csv_path):
-        exist_df = pd.read_csv(station_csv_path)
-        combined_station_df = pd.concat(
-            [exist_df, station_incoming], ignore_index=True
-        )
-    else:
-        combined_station_df = station_incoming
+    # 取得真正的測站名稱
+    s_name = combined_station_df["StationName"].dropna().iloc[0]
+    station_csv_path = STATION_DIR / f"{s_id}_{s_name}.csv"
 
     combined_station_df.drop_duplicates(
         subset=["DateTime", "StationId"], inplace=True
@@ -156,19 +177,22 @@ for s_id in target_stations:
     )
 
 # ==========================================
-# 3. 彙整歷史總表 weather_history.csv
+# 3. 彙整歷史總表 weather_history.csv (存放在根目錄)
 # ==========================================
-all_station_files = glob.glob(os.path.join(STATION_DIR, "*.csv"))
+all_station_files = list(STATION_DIR.glob("*.csv"))
 master_list = [pd.read_csv(f) for f in all_station_files]
 
+master_df = pd.DataFrame()
 if master_list:
     master_df = pd.concat(master_list, ignore_index=True)
     master_df.drop_duplicates(subset=["DateTime", "StationId"], inplace=True)
     master_df.sort_values(by=["DateTime", "StationId"], inplace=True)
-    master_df.to_csv("weather_history.csv", index=False, encoding="utf-8-sig")
+    master_df.to_csv(
+        BASE_DIR / "weather_history.csv", index=False, encoding="utf-8-sig"
+    )
 
 # ==========================================
-# 4. 繪製圖表 (精確對應欄位與繁體中文顯示)
+# 4. 繪製圖表 (輸出至根目錄 weather_chart.png)
 # ==========================================
 if master_list and not master_df.empty:
     plot_df = master_df.copy()
@@ -179,7 +203,6 @@ if master_list and not master_df.empty:
     )
     plot_df["Rainfall"] = pd.to_numeric(plot_df["Rainfall"], errors="coerce")
 
-    # 組合 StationId 與 StationName 作為圖例標籤 (例如 "C0TA40 測站名稱")
     plot_df["StationLabel"] = (
         plot_df["StationId"] + " " + plot_df["StationName"]
     )
@@ -198,7 +221,7 @@ if master_list and not master_df.empty:
         station_labels = plot_df["StationLabel"].unique()
         num_stations = len(station_labels)
 
-        # 【上圖】氣溫折線圖 (X軸: DateTime, Y軸: Temperature, 圖例: StationId StationName)
+        # 【上圖】氣溫折線圖
         for label in station_labels:
             group = plot_df[plot_df["StationLabel"] == label].dropna(
                 subset=["Temperature"]
@@ -219,7 +242,7 @@ if master_list and not master_df.empty:
         ax1.grid(True, linestyle="--", alpha=0.5)
         ax1.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-        # 【下圖】雨量直條圖 (X軸: DateTime, Y軸: Rainfall, 圖例: StationId StationName)
+        # 【下圖】雨量直條圖
         single_bar_width = 0.012 / max(num_stations, 1)
 
         for i, label in enumerate(station_labels):
@@ -246,13 +269,13 @@ if master_list and not master_df.empty:
         ax2.grid(True, linestyle="--", alpha=0.5)
         ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-        # X軸時間軸格式設定
+        # X 軸時間軸格式設定
         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
         fig.autofmt_xdate(rotation=45)
 
         plt.tight_layout()
 
-        chart_filename = "weather_chart.png"
+        chart_filename = BASE_DIR / "weather_chart.png"
         plt.savefig(chart_filename, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"圖表已成功生成: {chart_filename}")
