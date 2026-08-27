@@ -20,6 +20,55 @@ STATION_MAP = {
     "C0Z230": "和平",
 }
 
+# 統一目標 Schema 欄位名稱
+TARGET_COLUMNS = [
+    "station_id",
+    "station_name",
+    "datetime",
+    "temperature",
+    "rainfall",
+]
+
+
+def clean_raw_df(file_path):
+    filename = file_path.name
+    try:
+        station_id, date_str = filename.replace(".csv", "").split("-", 1)
+    except ValueError:
+        return None, None
+
+    # header=1 跳過第一行中文單位，直接使用第二行英文欄位
+    df = pd.read_csv(file_path, header=1, encoding="utf-8-sig")
+
+    # ObsTime 補零並處理 24 時跨夜邏輯
+    df["ObsTime"] = df["ObsTime"].astype(str).str.zfill(2)
+    dt_series = pd.to_datetime(
+        date_str + " " + df["ObsTime"].replace({"24": "00"}),
+        format="%Y-%m-%d %H",
+        errors="coerce",
+    )
+    # 若時間為 24 時，日期自動加 1 天
+    dt_series.loc[df["ObsTime"] == "24"] += pd.Timedelta(days=1)
+    df["datetime"] = dt_series.dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    # 欄位建構與重命名
+    df["station_id"] = station_id
+    df["station_name"] = STATION_MAP.get(station_id, "未知")
+    df.rename(
+        columns={"Temperature": "temperature", "Precp": "rainfall"},
+        inplace=True,
+    )
+
+    # 氣象異常值與微量降雨清洗 (T 轉 0.05, 異常字元轉 NaN)
+    df["rainfall"] = df["rainfall"].replace({"T": 0.05, "x": None, "&": None})
+
+    # 數值轉型
+    df["temperature"] = pd.to_numeric(df["temperature"], errors="coerce")
+    df["rainfall"] = pd.to_numeric(df["rainfall"], errors="coerce")
+
+    # 僅留存指定 Schema 欄位
+    return station_id, df[TARGET_COLUMNS]
+
 
 def process_raw_files():
     raw_files = list(RAW_DIR.glob("*.csv"))
@@ -28,70 +77,37 @@ def process_raw_files():
         return
 
     station_data_list = {}
-
     for file_path in raw_files:
-        filename = file_path.name
-        # 解析檔名 (例: C0Z220-2026-08-26.csv)
-        try:
-            station_id, date_str = filename.replace(".csv", "").split("-", 1)
-        except ValueError:
-            continue
+        st_id, df_cleaned = clean_raw_df(file_path)
+        if df_cleaned is not None:
+            if st_id not in station_data_list:
+                station_data_list[st_id] = []
+            station_data_list[st_id].append(df_cleaned)
 
-        # 讀取氣象 CSV (header=1 自動抓取第二行的英文欄位名稱)
-        df = pd.read_csv(file_path, header=1, encoding="utf-8-sig")
-        df.insert(0, "Station", station_id)
-        df.insert(1, "Date", date_str)
-
-        # 時間補零與 24 時跨夜邏輯修正
-        df["ObsTime"] = df["ObsTime"].astype(str).str.zfill(2)
-        df["Datetime"] = pd.to_datetime(
-            date_str + " " + df["ObsTime"].replace({"24": "00"}),
-            format="%Y-%m-%d %H",
-        )
-        df.loc[df["ObsTime"] == "24", "Datetime"] += pd.Timedelta(days=1)
-
-        # 氣象異常符號清洗 (&, x 轉為空值；T 轉為微量雨量 0.05)
-        df["Precp"] = df["Precp"].replace({"T": 0.05, "x": None, "&": None})
-        num_cols = [
-            "StnPres",
-            "Temperature",
-            "RH",
-            "WS",
-            "WD",
-            "WSGust",
-            "WDGust",
-            "Precp",
-        ]
-        df[num_cols] = df[num_cols].apply(pd.to_numeric, errors="coerce")
-
-        if station_id not in station_data_list:
-            station_data_list[station_id] = []
-        station_data_list[station_id].append(df)
-
-    # 寫入或追加至 historical_data/
+    # 寫入/追加至 historical_data/
     for station_id, df_list in station_data_list.items():
         new_df = pd.concat(df_list, ignore_index=True)
-
         st_name = STATION_MAP.get(station_id, "未知")
         out_name = f"{station_id}_{st_name}.csv"
         out_path = HISTORICAL_DIR / out_name
 
-        # 若已存在歷史檔，先讀取並合併，最後依 Datetime 去重
         if out_path.exists():
             old_df = pd.read_csv(out_path)
-            # 統一轉成 Datetime 格式比較
-            old_df["Datetime"] = pd.to_datetime(old_df["Datetime"])
+            # 確保欄位名稱皆為小寫相容
+            old_df.columns = [c.lower() for c in old_df.columns]
             combined_df = pd.concat([old_df, new_df], ignore_index=True)
         else:
             combined_df = new_df
 
-        combined_df.sort_values(by="Datetime", inplace=True)
+        # 強制維持指定 Schema 欄位順序與資料結構
+        combined_df = combined_df[TARGET_COLUMNS]
+        combined_df.sort_values(by="datetime", inplace=True)
         combined_df.drop_duplicates(
-            subset=["Datetime"], keep="last", inplace=True
+            subset=["datetime"], keep="last", inplace=True
         )
 
         combined_df.to_csv(out_path, index=False, encoding="utf-8-sig")
-        print(f"成功更新歷史資料檔：{out_path}")
+        print(f"成功更新歷史資料（Schema 統整完畢）：{out_path}")
 
 
 if __name__ == "__main__":
