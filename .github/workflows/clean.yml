@@ -38,5 +38,5 @@ jobs:
             git commit -m "Auto: process raw files to historical_data [skip ci]"
             git push
           else
-            echo "無新增資料需要提交。"
+            echo "無新增資料變更，跳過提交。"
           fi
