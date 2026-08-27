@@ -6,16 +6,15 @@ import pandas as pd
 # ==========================================
 # 0. 路徑與基礎設定 (適應 src/ 結構)
 # ==========================================
-# 取得專案根目錄 (weather-monitor/)
+# 強制設定為專案根目錄 (weather-monitor/)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# 統一動態路徑
 CONFIG_DIR = BASE_DIR / "config"
-CONFIG_FILE = CONFIG_DIR / "user_settings.json"
-
+RAW_DIR = BASE_DIR / "raw"
 HISTORICAL_DIR = BASE_DIR / "historical_data"
 STATIONS_DIR = BASE_DIR / "stations_data"
-
-CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+FONT_PATH = CONFIG_DIR / "NotoSansCJKtc-Regular.otf"
 
 
 # ==========================================
