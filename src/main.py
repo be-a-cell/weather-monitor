@@ -209,7 +209,7 @@ if invalid_records:
     invalid_df.to_csv(invalid_csv_path, index=False, encoding="utf-8-sig")
 
 # ==========================================
-# 2. 獨立測站數據更新與寫入 (整合 historical_data)
+# 2. 獨立測站數據更新與寫入 (以 historical_data 為基礎進行合併)
 # ==========================================
 for s_id in target_stations:
     station_incoming = (
@@ -218,28 +218,33 @@ for s_id in target_stations:
         else pd.DataFrame()
     )
 
+    # 1. 讀取歷史資料 (historical_data)
     history_matches = list(HISTORICAL_DIR.glob(f"{s_id}_*.csv"))
     historical_df = pd.DataFrame()
     if history_matches:
-        hist_file = history_matches[0]
-        if hist_file.stat().st_size > 0:
-            try:
-                raw_hdf = pd.read_csv(hist_file)
-                historical_df = normalize_dataframe(raw_hdf)
-            except Exception as e:
-                print(f"讀取歷史檔案 {hist_file.name} 失敗: {e}")
+        for hist_file in history_matches:
+            if hist_file.stat().st_size > 0:
+                try:
+                    raw_hdf = pd.read_csv(hist_file)
+                    hdf = normalize_dataframe(raw_hdf)
+                    historical_df = pd.concat([historical_df, hdf], ignore_index=True)
+                except Exception as e:
+                    print(f"讀取歷史檔案 {hist_file.name} 失敗: {e}")
 
+    # 2. 讀取既有測站資料 (stations_data)
     station_matches = list(STATION_DIR.glob(f"{s_id}_*.csv"))
     exist_df = pd.DataFrame()
     if station_matches:
-        exist_file = station_matches[0]
-        if exist_file.stat().st_size > 0:
-            try:
-                raw_edf = pd.read_csv(exist_file)
-                exist_df = normalize_dataframe(raw_edf)
-            except Exception as e:
-                print(f"讀取既有檔案 {exist_file.name} 失敗: {e}")
+        for exist_file in station_matches:
+            if exist_file.stat().st_size > 0:
+                try:
+                    raw_edf = pd.read_csv(exist_file)
+                    edf = normalize_dataframe(raw_edf)
+                    exist_df = pd.concat([exist_df, edf], ignore_index=True)
+                except Exception as e:
+                    print(f"讀取既有檔案 {exist_file.name} 失敗: {e}")
 
+    # 合併三者：historical_data + stations_data + API新數據
     combined_station_df = pd.concat(
         [historical_df, exist_df, station_incoming], ignore_index=True
     )
@@ -248,29 +253,29 @@ for s_id in target_stations:
         continue
 
     combined_station_df["station_id"] = s_id
+    
+    # 清理重複項（若時間相同，保留最後出現者/最新數據）
     combined_station_df.drop_duplicates(
-        subset=["station_id", "datetime"], inplace=True
+        subset=["station_id", "datetime"], keep="last", inplace=True
     )
     combined_station_df.sort_values(by="datetime", inplace=True)
 
-    combined_station_df["datetime"] = combined_station_df[
-        "datetime"
-    ].dt.strftime("%Y-%m-%d %H:%M:%S")
+    s_name = combined_station_df["station_name"].dropna().iloc[-1]
+    
+    # 格式化輸出
+    output_df = combined_station_df.copy()
+    output_df["datetime"] = output_df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
-    s_name = combined_station_df["station_name"].dropna().iloc[0]
     station_csv_path = STATION_DIR / f"{s_id}_{s_name}.csv"
-
-    combined_station_df.to_csv(
-        station_csv_path, index=False, encoding="utf-8-sig"
-    )
+    output_df.to_csv(station_csv_path, index=False, encoding="utf-8-sig")
 
 # ==========================================
-# 3. 彙整歷史總表 weather_history.csv
+# 3. 彙整歷史總表 (同時讀取 historical_data 與 stations_data)
 # ==========================================
-all_station_files = list(STATION_DIR.glob("*.csv"))
+all_files = list(HISTORICAL_DIR.glob("*.csv")) + list(STATION_DIR.glob("*.csv"))
 master_list = []
 
-for f in all_station_files:
+for f in all_files:
     if f.stat().st_size > 0:
         try:
             raw_f = pd.read_csv(f)
@@ -283,7 +288,7 @@ for f in all_station_files:
 master_df = pd.DataFrame()
 if master_list:
     master_df = pd.concat(master_list, ignore_index=True)
-    master_df.drop_duplicates(subset=["station_id", "datetime"], inplace=True)
+    master_df.drop_duplicates(subset=["station_id", "datetime"], keep="last", inplace=True)
     master_df.sort_values(by=["datetime", "station_id"], inplace=True)
 
     export_master_df = master_df.copy()
