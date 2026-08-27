@@ -35,7 +35,8 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add historical_data/
           if ! git diff --staged --quiet; then
-            git commit -m "Auto: process raw files to historical_data [skip ci]"
+            # 移除 [skip ci]，改用標準 Commit Message
+            git commit -m "Auto: process raw files to historical_data"
             git push
           else
             echo "無新增資料變更，跳過提交。"
