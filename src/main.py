@@ -66,17 +66,17 @@ if chosen_font_prop is None:
 mpl.rcParams["axes.unicode_minus"] = False
 
 # ==========================================
-# 輔助函式：標準化 CSV 欄位名稱
+# 輔助函式：標準化 CSV 欄位名稱 (修復時區衝突與重複欄位)
 # ==========================================
 def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """清理並統一不同來源 CSV 的欄位名稱與格式"""
+    """清理並統一不同來源 CSV 的欄位名稱與格式，統一移除時區資訊"""
     if df.empty:
         return df
 
     # 清除欄位前後空白
     df.columns = [str(c).strip() for c in df.columns]
 
-    # 針對 historical_data 可能出現的 rainfallDateTime 或其他命名進行對映
+    # 針對欄位對映進行處理
     rename_map = {}
     for col in df.columns:
         c_lower = col.lower()
@@ -88,10 +88,13 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             rename_map[col] = "datetime"
         elif "temp" in c_lower or c_lower == "temperature":
             rename_map[col] = "temperature"
-        elif "rain" in c_lower:  # 自動捕捉 rainfall 或 rainfallDateTime
+        elif "rain" in c_lower:
             rename_map[col] = "rainfall"
 
     df = df.rename(columns=rename_map)
+
+    # 若重命名後有重複欄位名，僅保留第一個
+    df = df.loc[:, ~df.columns.duplicated()]
 
     # 確保所需標準欄位均存在
     required_cols = [
@@ -105,11 +108,21 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
 
-    # 只保留這 5 個標準欄位
+    # 只保留標準欄位
     df = df[required_cols].copy()
 
-    # 資料型態轉型
-    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    # 資料型態轉型與【時區統一處理】
+    df["datetime"] = pd.to_datetime(
+        df["datetime"], errors="coerce"
+    )  # 轉為 Timestamp
+
+    # 關鍵修正：若包含時區資訊，則統一移除時區標籤 (Convert tz-aware to tz-naive)
+    if (
+        pd.api.types.is_datetime64tz_dtype(df["datetime"])
+        or df["datetime"].dt.tz is not None
+    ):
+        df["datetime"] = df["datetime"].dt.tz_localize(None)
+
     df["temperature"] = pd.to_numeric(df["temperature"], errors="coerce")
     df["rainfall"] = pd.to_numeric(df["rainfall"], errors="coerce")
 
