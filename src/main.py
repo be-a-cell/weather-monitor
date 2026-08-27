@@ -105,7 +105,7 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
     
     if isinstance(df["datetime"].dtype, pd.DatetimeTZDtype) or df["datetime"].dt.tz is not None:
-    df["datetime"] = df["datetime"].dt.tz_localize(None)
+        df["datetime"] = df["datetime"].dt.tz_localize(None)
     
         df["datetime"] = df["datetime"].dt.tz_localize(None)
 
