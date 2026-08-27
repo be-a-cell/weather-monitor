@@ -267,6 +267,9 @@ for s_id in target_stations:
     if combined_station_df.empty:
         continue
 
+    # 【關鍵修正】強制將這個檔的所有 station_id 校正為正確的 s_id (如 C0Z310)
+    combined_station_df["station_id"] = s_id
+
     # 規範化處理與去除重複項目
     combined_station_df.drop_duplicates(
         subset=["station_id", "datetime"], inplace=True
