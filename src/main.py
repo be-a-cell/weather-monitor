@@ -23,17 +23,26 @@ HISTORICAL_DIR = BASE_DIR / "historical_data"
 STATION_DIR.mkdir(parents=True, exist_ok=True)
 HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
 
-# 載入自訂中文字型檔 (config/NotoSansCJKtc-Regular.otf)
+# 載入自訂中文字型檔 (包含安全降級機制)
 FONT_PATH = CONFIG_DIR / "NotoSansCJKtc-Regular.otf"
+font_loaded = False
+
 if FONT_PATH.exists():
-    font_manager.fontManager.addfont(str(FONT_PATH))
-    font_prop = font_manager.FontProperties(fname=str(FONT_PATH))
-    mpl.rcParams["font.family"] = font_prop.get_name()
-else:
-    # 備用系統字型設定
+    try:
+        font_manager.fontManager.addfont(str(FONT_PATH))
+        font_prop = font_manager.FontProperties(fname=str(FONT_PATH))
+        mpl.rcParams["font.family"] = font_prop.get_name()
+        font_loaded = True
+        print(f"成功載入本地字型: {FONT_PATH}")
+    except Exception as e:
+        print(f"本地字型載入失敗 ({e})，自動切換至系統預設中文字型。")
+
+# 若本地字型不存在或載入失敗，則改用系統內建中文字型
+if not font_loaded:
     mpl.rcParams["font.sans-serif"] = [
         "Noto Sans CJK TC",
         "Noto Sans TC",
+        "WenQuanYi Micro Hei",
         "DejaVu Sans",
     ]
 
