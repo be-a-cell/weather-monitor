@@ -21,12 +21,11 @@ STATION_DIR.mkdir(parents=True, exist_ok=True)
 HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
 
 # ------------------------------------------
-# 徹底修復中文字型 (豆腐塊問題)
+# 中文字型設定
 # ------------------------------------------
 FONT_PATH = CONFIG_DIR / "NotoSansCJKtc-Regular.otf"
 chosen_font_prop = None
 
-# 1. 嘗試載入本地 otf
 if FONT_PATH.exists():
     try:
         font_manager.fontManager.addfont(str(FONT_PATH))
@@ -36,7 +35,6 @@ if FONT_PATH.exists():
     except Exception as e:
         print(f"本地字型載入失敗 ({e})，準備搜尋系統字型...")
 
-# 2. 若本地字型不可用，搜尋 Linux / Ubuntu 系統安裝的中文字型
 if chosen_font_prop is None:
     system_fonts = font_manager.findSystemFonts(fontpaths=None, fontext="ttf")
     cjk_fonts = [
@@ -52,7 +50,6 @@ if chosen_font_prop is None:
         mpl.rcParams["font.family"] = chosen_font_prop.get_name()
         print(f"成功套用系統中文字型: {cjk_fonts[0]}")
     else:
-        # 備用回退設定
         mpl.rcParams["font.sans-serif"] = [
             "Noto Sans CJK TC",
             "Noto Sans TC",
@@ -65,18 +62,16 @@ if chosen_font_prop is None:
 
 mpl.rcParams["axes.unicode_minus"] = False
 
+
 # ==========================================
-# 輔助函式：標準化 CSV 欄位名稱 (修復時區衝突與重複欄位)
+# 輔助函式：標準化 CSV 欄位名稱
 # ==========================================
 def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """清理並統一不同來源 CSV 的欄位名稱與格式，統一移除時區資訊"""
     if df.empty:
         return df
 
-    # 清除欄位前後空白
     df.columns = [str(c).strip() for c in df.columns]
 
-    # 針對欄位對映進行處理
     rename_map = {}
     for col in df.columns:
         c_lower = col.lower()
@@ -92,11 +87,8 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             rename_map[col] = "rainfall"
 
     df = df.rename(columns=rename_map)
-
-    # 若重命名後有重複欄位名，僅保留第一個
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # 確保所需標準欄位均存在
     required_cols = [
         "station_id",
         "station_name",
@@ -108,15 +100,9 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
 
-    # 只保留標準欄位
     df = df[required_cols].copy()
 
-    # 資料型態轉型與【時區統一處理】
-    df["datetime"] = pd.to_datetime(
-        df["datetime"], errors="coerce"
-    )  # 轉為 Timestamp
-
-    # 關鍵修正：若包含時區資訊，則統一移除時區標籤 (Convert tz-aware to tz-naive)
+    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
     if (
         pd.api.types.is_datetime64tz_dtype(df["datetime"])
         or df["datetime"].dt.tz is not None
@@ -126,9 +112,7 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["temperature"] = pd.to_numeric(df["temperature"], errors="coerce")
     df["rainfall"] = pd.to_numeric(df["rainfall"], errors="coerce")
 
-    # 移除無效時間
     df = df.dropna(subset=["datetime"])
-
     return df
 
 
@@ -211,7 +195,6 @@ if "records" in data and "Station" in data["records"]:
 
 new_df = normalize_dataframe(pd.DataFrame(new_records))
 
-# 記錄異常資料
 if invalid_records:
     invalid_df = pd.DataFrame(invalid_records)
     invalid_csv_path = BASE_DIR / "missing_or_invalid_data.csv"
@@ -235,7 +218,6 @@ for s_id in target_stations:
         else pd.DataFrame()
     )
 
-    # 1. 讀取 historical_data/ 下對應的 CSV
     history_matches = list(HISTORICAL_DIR.glob(f"{s_id}_*.csv"))
     historical_df = pd.DataFrame()
     if history_matches:
@@ -247,7 +229,6 @@ for s_id in target_stations:
             except Exception as e:
                 print(f"讀取歷史檔案 {hist_file.name} 失敗: {e}")
 
-    # 2. 讀取 stations_data/ 下對應的 CSV
     station_matches = list(STATION_DIR.glob(f"{s_id}_*.csv"))
     exist_df = pd.DataFrame()
     if station_matches:
@@ -259,7 +240,6 @@ for s_id in target_stations:
             except Exception as e:
                 print(f"讀取既有檔案 {exist_file.name} 失敗: {e}")
 
-    # 3. 合併舊歷史、已有資料與 API 新資料
     combined_station_df = pd.concat(
         [historical_df, exist_df, station_incoming], ignore_index=True
     )
@@ -267,16 +247,12 @@ for s_id in target_stations:
     if combined_station_df.empty:
         continue
 
-    # 【關鍵修正】強制將這個檔的所有 station_id 校正為正確的 s_id (如 C0Z310)
     combined_station_df["station_id"] = s_id
-
-    # 規範化處理與去除重複項目
     combined_station_df.drop_duplicates(
         subset=["station_id", "datetime"], inplace=True
     )
     combined_station_df.sort_values(by="datetime", inplace=True)
 
-    # 格式化 datetime 為字串再存檔
     combined_station_df["datetime"] = combined_station_df[
         "datetime"
     ].dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -289,7 +265,7 @@ for s_id in target_stations:
     )
 
 # ==========================================
-# 3. 彙整歷史總表 weather_history.csv (存放在根目錄)
+# 3. 彙整歷史總表 weather_history.csv
 # ==========================================
 all_station_files = list(STATION_DIR.glob("*.csv"))
 master_list = []
@@ -310,7 +286,6 @@ if master_list:
     master_df.drop_duplicates(subset=["station_id", "datetime"], inplace=True)
     master_df.sort_values(by=["datetime", "station_id"], inplace=True)
 
-    # 格式化日期並匯出總表
     export_master_df = master_df.copy()
     export_master_df["datetime"] = export_master_df["datetime"].dt.strftime(
         "%Y-%m-%d %H:%M:%S"
@@ -321,7 +296,7 @@ if master_list:
     print(f"成功更新總表 weather_history.csv，共 {len(export_master_df)} 筆資料。")
 
 # ==========================================
-# 4. 繪製圖表 (輸出至根目錄 weather_chart.png)
+# 4. 繪製圖表 (修復雨量圖與柱狀圖寬度問題)
 # ==========================================
 if not master_df.empty:
     plot_df = master_df.copy()
@@ -333,7 +308,12 @@ if not master_df.empty:
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
 
     station_labels = plot_df["StationLabel"].unique()
-    num_stations = len(station_labels)
+
+    # 計算全域時間跨度以設定合理的直條圖寬度 (預設寬度為總天數的 0.5%)
+    total_days = (
+        plot_df["datetime"].max() - plot_df["datetime"].min()
+    ).total_seconds() / 86400
+    dynamic_bar_width = max(total_days * 0.003, 0.5)  # 最少 0.5 天寬度避免消失
 
     # 【上圖】氣溫折線圖
     for label in station_labels:
@@ -346,8 +326,8 @@ if not master_df.empty:
             group["datetime"],
             group["temperature"],
             marker="o",
-            markersize=3,
-            linewidth=1.5,
+            markersize=1.5,
+            linewidth=1,
             label=label,
         )
 
@@ -356,26 +336,33 @@ if not master_df.empty:
     ax1.grid(True, linestyle="--", alpha=0.5)
     leg1 = ax1.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
-    # 【下圖】雨量直條圖
-    single_bar_width = 0.012 / max(num_stations, 1)
-
-    for i, label in enumerate(station_labels):
+    # 【下圖】雨量直條圖 / 折線圖 (修復雨量無法顯示問題)
+    for label in station_labels:
         group = plot_df[plot_df["StationLabel"] == label].dropna(
             subset=["rainfall"]
         )
         if group.empty:
             continue
 
-        offset = (i - (num_stations - 1) / 2) * single_bar_width
-        x_dates = mdates.date2num(group["datetime"]) + offset
+        # 過濾出有雨量數據 (>0) 來畫顯著柱狀圖，避免 0mm 佔滿圖表
+        rain_positive = group[group["rainfall"] > 0]
 
-        ax2.bar(
-            x_dates,
-            group["rainfall"],
-            width=single_bar_width,
-            alpha=0.7,
-            label=label,
-        )
+        if not rain_positive.empty:
+            ax2.bar(
+                rain_positive["datetime"],
+                rain_positive["rainfall"],
+                width=dynamic_bar_width,
+                alpha=0.6,
+                label=label,
+            )
+        else:
+            # 若無降雨，畫一條隱形點維持 Legend
+            ax2.plot(
+                group["datetime"].iloc[:1],
+                group["rainfall"].iloc[:1],
+                alpha=0,
+                label=label,
+            )
 
     r_title = ax2.set_title("即時雨量直條圖 (mm)", fontsize=14, fontweight="bold")
     r_xlabel = ax2.set_xlabel("時間 (DateTime)", fontsize=12)
@@ -383,11 +370,18 @@ if not master_df.empty:
     ax2.grid(True, linestyle="--", alpha=0.5)
     leg2 = ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
 
+    # 自動調整雨量 Y 軸上限，避免雨量極小導致沒反應
+    max_rain = plot_df["rainfall"].max()
+    if pd.notna(max_rain) and max_rain > 0:
+        ax2.set_ylim(0, max_rain * 1.1)
+    else:
+        ax2.set_ylim(0, 10)  # 預設上限
+
     # X 軸時間軸格式設定
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
     fig.autofmt_xdate(rotation=45)
 
-    # 顯式為圖表上所有中文元件指定字型 Properties (徹底告別豆腐塊)
+    # 顯式指定中文 Properties
     if chosen_font_prop:
         t_title.set_fontproperties(chosen_font_prop)
         t_ylabel.set_fontproperties(chosen_font_prop)
