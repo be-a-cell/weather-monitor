@@ -30,6 +30,21 @@ TARGET_COLUMNS = [
 ]
 
 
+def standardize_datetime(df):
+    """將 datetime 欄位統一轉換為 ISO 標準時間格式 (YYYY-MM-DD HH:MM:SS)"""
+    if "datetime" in df.columns:
+        # 1. 自動解析混雜格式 (/ 與 -, 有無時間欄位皆可處理)
+        dt_series = pd.to_datetime(
+            df["datetime"].astype(str).str.strip(),
+            format="mixed",
+            errors="coerce",
+        )
+
+        # 2. 統一轉為字串格式 YYYY-MM-DD HH:MM:SS
+        df["datetime"] = dt_series.dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    return df
+    
 def clean_raw_df(file_path):
     filename = file_path.name
     try:
