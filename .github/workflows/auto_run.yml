@@ -1,51 +1,36 @@
-name: Run Weather Monitor
+name: CODIS Weather Automation
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # 每 15 分鐘自動執行一次
-  workflow_dispatch:       # 支援手動觸發
-
-permissions:
-  contents: write
+    - cron: '0 0 * * *'  # 每天 UTC 00:00 (台灣時間 08:00) 自動執行
+  workflow_dispatch:      # 允許在 GitHub 頁面手動點擊觸發
 
 jobs:
-  build-and-run:
+  run-crawler:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
 
-      - name: Install Traditional Chinese Fonts
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        playwright install chromium
+        playwright install-deps
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas matplotlib requests
+    - name: Run Weather Script
+      run: python src/main.py
 
-      - name: Run Weather Monitor Script
-        env:
-          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
-        run: python src/main.py
-
-      - name: Commit and Push Updated Data & Chart
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-
-          git add .
-
-          if ! git diff --staged --quiet; then
-            git commit -m "Auto update weather data & station files"
-            git push
-          else
-            echo "沒有新數據變更，跳過 Commit。"
-          fi
+    - name: Commit & Push updated data and chart
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add src/weather_database.db weather_chart.png
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update weather DB & chart [skip ci]" && git push)
